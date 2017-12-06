@@ -1,0 +1,203 @@
+create or replace 
+PROCEDURE Deduction_Given_CONCERNROLEID
+(
+ i_concernroleid        IN /* schemaname */ CASEHEADER.CONCERNROLEID%TYPE,
+ i_debug_print          IN                  INTEGER DEFAULT 0, /* 0 ==> don't print, 1 ==> print */
+ i_add_header           IN                  INTEGER DEFAULT 1, /* 0 ==> no header, 1 ==> add header */
+ i_output_format        IN                  INTEGER DEFAULT 1, /* 1 ==> XML, 2 ==> pipe-delimited */
+ o_response_code        OUT                 VARCHAR2,
+ o_response_text        OUT                 VARCHAR2,
+ o_user_details_CLOB    OUT                 CLOB  
+)
+IS
+BEGIN
+DECLARE
+--  tabs                        tabsarray;
+  crlf                          VARCHAR2(2) := chr(13)||chr(10);
+  i                             INTEGER;
+  RC                            varchar2(30);
+  RM                            varchar2(1000);
+  v_ret                         CLOB;
+  i_IC                          CASEHEADER.CASEREFERENCE%TYPE;
+  l_IC                          CASEHEADER.CASEREFERENCE%TYPE;
+  l_concernroleid               CASEHEADER.CONCERNROLEID%TYPE;
+  l_caseid                      CASEHEADER.CASEID%TYPE;
+  l_evidenceid                  DYNAMICEVIDENCEDATAATTRIBUTE.EVIDENCEID%TYPE;
+  l_caseparticipantroleid       NUMBER := NULL;
+  l_dob                         CHAR(8) := '';
+  l_firstname                   VARCHAR2(65) := '';
+  l_lastname                    VARCHAR2(65) := '';
+  l_issingleevidence            BOOLEAN;
+  evidenceFound                 BOOLEAN;
+  l_successionid                NUMBER := NULL;
+  l_effectivefrom               DATE;
+  nextEndDate                   VARCHAR2(4000) := '';
+  l_first_of_the_year           VARCHAR2(30);
+  TYPE char_table_type IS VARRAY(40) OF CASEHEADER.CASEREFERENCE%TYPE;
+  TYPE numbers_table_type IS VARRAY(40) OF NUMBER;
+  TYPE dates_table_type   IS VARRAY(40) OF DATE;
+  l_caseidarray                 numbers_table_type;
+  l_casereferencearray          char_table_type;
+  l_statuscodearray             char_table_type;
+  l_receiveddatearray           dates_table_type;
+  l_successionidarray           numbers_table_type;
+  l_correctionsetidarray        char_table_type;
+  l_evidenceidarray             numbers_table_type;
+  l_evidenceidarray_tmp         numbers_table_type;
+  l_effectivefromarray          dates_table_type;
+  l_participantarray            numbers_table_type;
+  l_caseparticipantarray        numbers_table_type;
+  l_rankarray                   numbers_table_type;
+  l_participant                 NUMBER;
+  ded_frequency                 VARCHAR2(100);
+  ded_deductionDescription      VARCHAR2(1000);
+  relatedFilers                 VARCHAR2(1000);
+  ded_deductionType             VARCHAR2(4000) := '';
+  ded_amount                    VARCHAR2(4000) := '';
+  ded_frequencyCode             VARCHAR2(4000) := '';
+  ded_startDate                 VARCHAR2(4000) := '';
+  ded_endDate                   VARCHAR2(4000) := '';
+  ded_caseParticipantRoleID     VARCHAR2(4000) := '';
+BEGIN
+  l_evidenceidarray := numbers_table_type(100); /* initialize */
+  l_concernroleid := i_concernroleid;
+IF i_debug_print > 0 THEN dbms_output.put_line('START - params: i_concernroleid='||i_concernroleid||' i_debug_print='||i_debug_print||' i_add_header='||i_add_header||' i_output_format='||i_output_format); END IF;
+/* Find ALL cases this concernroleid is involved in - other concernroleids may be found */
+  SELECT DISTINCT CPR.PARTICIPANTROLEID, CH.CASEREFERENCE, CH.CASEID BULK COLLECT INTO l_participantarray, l_casereferencearray, l_caseidarray 
+    FROM CASEHEADER CH, CASEPARTICIPANTROLE CPR WHERE CH.CASEREFERENCE IN (SELECT DISTINCT CH.CASEREFERENCE FROM CASEHEADER CH, CASEPARTICIPANTROLE CPR 
+    WHERE CPR.PARTICIPANTROLEID = l_concernroleid AND CH.CASEID = CPR.CASEID AND CPR.TYPECODE IN ('PRI', 'MEM') AND CH.CASETYPECODE = 'CT5' /* Integrated Case */ AND CH.STATUSCODE = 'CS4'/* OPEN */) 
+          AND CPR.TYPECODE IN ('PRI', 'MEM') AND CH.CASEID = CPR.CASEID AND CH.CASETYPECODE = 'CT5' /* Integrated Case */ AND CH.STATUSCODE = 'CS4'/* OPEN */ ;  
+IF i_debug_print > 0 THEN dbms_output.put_line('l_casereferencearray.count='||l_casereferencearray.count); END IF;
+  CASE 
+     WHEN l_casereferencearray.count = 0 THEN 
+        o_response_code := 'NO_DATA_FOUND'; 
+        o_response_text := 'No IC found for input concernroleid: ' || l_concernroleid; 
+        l_IC := 'NO ICs';        
+     WHEN l_casereferencearray.count >= 1 THEN
+IF i_debug_print > 0 THEN dbms_output.put_line('l_concernroleid='||l_concernroleid); END IF;
+IF i_debug_print > 0 THEN
+  FOR i IN 1..l_casereferencearray.count
+  LOOP
+    dbms_output.put_line('l_casereferencearray('||i||')='||l_casereferencearray(i));
+    dbms_output.put_line('l_participantarray('||i||')='||l_participantarray(i));
+    dbms_output.put_line('l_caseidarray('||i||')='||l_caseidarray(i));
+  END LOOP;
+END IF;
+        FOR i IN 1..l_casereferencearray.count /* find caseid that matches input concernroleid and yields results */
+        LOOP
+IF i_debug_print > 0 THEN dbms_output.put_line('In loop l_concernroleid='||l_concernroleid||' l_participantarray('||i||')='||l_participantarray(i)); END IF;
+          IF l_participantarray(i) <> l_concernroleid THEN 
+            CONTINUE;
+          ELSE 
+            IF o_response_text IS NULL THEN 
+              o_response_text := l_casereferencearray(i);
+            ELSE
+              o_response_text := o_response_text || ', ' || l_casereferencearray(i);
+            END IF;
+            l_caseid := l_caseidarray(i);
+            l_IC := o_response_text;
+          END IF;
+IF i_debug_print > 0 THEN dbms_output.put_line('l_IC='||l_IC||' l_caseid='||l_caseid||' l_concernroleid='||l_concernroleid); END IF;
+/* Find latest active income value for this person and this IC and this deduction's history */
+          SELECT ED.SUCCESSIONID, ED.STATUSCODE, ED.RECEIVEDDATE, ED.CORRECTIONSETID, TO_DATE(TO_CHAR(EFFECTIVEFROM, 'YYYYMMDD'), 'YYYYMMDD'), RELATEDID, DENSE_RANK() OVER (PARTITION BY ED.SUCCESSIONID 
+            ORDER BY ED.SUCCESSIONID, NVL(ED.EFFECTIVEFROM,TO_DATE('00010101', 'YYYYMMDD')) DESC) Succession_Rank 
+            BULK COLLECT INTO l_successionidarray, l_statuscodearray, l_receiveddatearray, l_correctionsetidarray, l_effectivefromarray, l_evidenceidarray, l_rankarray
+            FROM EVIDENCEDESCRIPTOR ED WHERE ED.PARTICIPANTID = l_concernroleid and ED.CASEID = l_caseid and ED.EVIDENCETYPE = 'DET0026066' AND ED.STATUSCODE = 'EDS1';
+IF i_debug_print > 0 THEN dbms_output.put_line('DEBUGEVIDENCEDESCRIPTOR1: l_evidenceidarray.count= '||l_evidenceidarray.count); END IF;
+          FOR i IN 1..l_evidenceidarray.count
+          LOOP
+IF i_debug_print > 0 THEN dbms_output.put_line('l_rankarray('||i||')='||l_rankarray(i)); END IF;
+IF i_debug_print > 0 THEN dbms_output.put_line('l_successionidarray('||i||')='||l_successionidarray(i)); END IF;
+IF i_debug_print > 0 THEN dbms_output.put_line('l_effectivefromarray('||i||')='||l_effectivefromarray(i)); END IF;
+IF i_debug_print > 0 THEN dbms_output.put_line('l_evidenceidarray('||i||')='||l_evidenceidarray(i)); END IF;
+        /* Search for DET0026030 (Income data) using the evidenceid */
+            BEGIN SELECT TO_CHAR(TO_DATE(VALUE, 'YYYYMMDD'), 'YYYYMMDD') INTO ded_startDate FROM DYNAMICEVIDENCEDATAATTRIBUTE WHERE EVIDENCEID = l_evidenceidarray(i) AND NAME =  'startDate';
+            EXCEPTION WHEN NO_DATA_FOUND THEN null; END; --Do nothing
+            IF (l_effectivefromarray(i) IS NOT NULL AND l_effectivefromarray(i) <> TO_DATE('00010101', 'YYYYMMDD')) THEN ded_startDate := TO_CHAR(l_effectivefromarray(i), 'YYYYMMDD'); END IF; /* 20170925, George Gluck, Fix to use sucessionid rank properly */
+IF i_debug_print > 0 THEN dbms_output.put_line('ded_startDate1='||TO_CHAR(TO_DATE(ded_startDate, 'YYYYMMDD'), 'YYYYMMDD')); END IF;
+IF i_debug_print > 0 THEN dbms_output.put_line('TO_CHAR(TO_DATE(ded_startDate) - 1)='||TO_CHAR(TO_DATE(ded_startDate, 'YYYYMMDD') - 1, 'YYYYMMDD')); END IF;
+            BEGIN SELECT VALUE INTO ded_endDate FROM DYNAMICEVIDENCEDATAATTRIBUTE WHERE EVIDENCEID = l_evidenceidarray(i) AND NAME =  'endDate';
+            EXCEPTION WHEN NO_DATA_FOUND THEN null; END; --Do nothing
+            IF l_rankarray(i) > 1 THEN ded_endDate := nextEndDate; END IF; /* 20170925, George Gluck, Fix to use sucessionid rank properly */
+            nextEndDate :=TO_CHAR(TO_DATE(ded_startDate, 'YYYYMMDD') - 1, 'YYYYMMDD'); /* 20170925, George Gluck, Fix to use sucessionid rank properly */
+IF i_debug_print > 0 THEN dbms_output.put_line('l_rankarray('||i||')/ded_endDate/nextEndDate='||l_rankarray(i)||'/'||ded_endDate||'/'||nextEndDate); END IF;
+            BEGIN SELECT VALUE INTO ded_deductionType FROM DYNAMICEVIDENCEDATAATTRIBUTE WHERE EVIDENCEID = l_evidenceidarray(i) AND NAME =  'deductionType';
+            EXCEPTION WHEN NO_DATA_FOUND THEN null; END; --Do nothing 
+            BEGIN SELECT VALUE INTO ded_amount FROM DYNAMICEVIDENCEDATAATTRIBUTE WHERE EVIDENCEID = l_evidenceidarray(i) AND NAME =  'amount';
+            EXCEPTION WHEN NO_DATA_FOUND THEN null; END; --Do nothing 
+            BEGIN SELECT VALUE INTO ded_frequencyCode FROM DYNAMICEVIDENCEDATAATTRIBUTE WHERE EVIDENCEID = l_evidenceidarray(i) AND NAME =  'frequencyCode';
+            EXCEPTION WHEN NO_DATA_FOUND THEN null; END; --Do nothing 
+            
+IF i_debug_print > 0 THEN dbms_output.put_line('coden='||ded_frequencyCode); END IF;
+            BEGIN SELECT DESCRIPTION INTO ded_frequency FROM CODETABLEITEM WHERE TABLENAME = 'FrequencyCode' AND CODE = ded_frequencyCode;
+            EXCEPTION WHEN NO_DATA_FOUND THEN null; END; --Do nothing 
+IF i_debug_print > 0 THEN dbms_output.put_line('description='||ded_frequency); END IF;
+            
+IF i_debug_print > 0 THEN dbms_output.put_line('ded_frequencyCode='||ded_deductionType); END IF;
+            BEGIN SELECT DESCRIPTION INTO ded_deductionDescription FROM CODETABLEITEM WHERE TABLENAME = 'IncomeDeduction' AND CODE = ded_deductionType;
+            EXCEPTION WHEN NO_DATA_FOUND THEN null; END; --Do nothing 
+IF i_debug_print > 0 THEN dbms_output.put_line('description='||ded_deductionDescription); END IF;
+            BEGIN SELECT VALUE INTO ded_caseParticipantRoleID FROM DYNAMICEVIDENCEDATAATTRIBUTE WHERE EVIDENCEID = l_evidenceidarray(i) AND NAME =  'caseParticipantRoleID';
+            EXCEPTION WHEN NO_DATA_FOUND THEN null; END; --Do nothing 
+IF i_debug_print > 0 THEN dbms_output.put_line('ded_deductionType='||ded_deductionType); END IF;
+IF i_debug_print > 0 THEN dbms_output.put_line('ded_amount='||ded_amount); END IF;
+IF i_debug_print > 0 THEN dbms_output.put_line('ded_frequencyCode='||ded_frequencyCode); END IF;
+IF i_debug_print > 0 THEN dbms_output.put_line('ded_caseParticipantRoleID='||ded_caseParticipantRoleID); END IF;
+            IF i_output_format = 1 THEN /* XML */
+              o_user_details_CLOB := o_user_details_CLOB ||
+                '<deduction>'||
+                '<evidenceID>'||l_evidenceidarray(i)||'</evidenceID>'||
+                '<deduction_typeCode>'||ded_deductionType||'</deduction_typeCode>'||
+                '<income_type>'||ded_deductionDescription||'</income_type>'||
+                '<amount>'||ded_amount||'</amount>'||
+                '<ded_frequencyCode>'||ded_frequencyCode||'</ded_frequencyCode>'||
+                '<frequency>'||ded_frequency||'</frequency>'||
+                '<start_date>'||ded_startDate||'</start_date>'||
+                '<end_date>'||ded_endDate||'</end_date>'||
+                '<ded_caseParticipantRoleID>'||ded_caseParticipantRoleID||'</ded_caseParticipantRoleID>'||
+                '<ded_ParticipantRoleID>'||l_concernroleid||'</ded_ParticipantRoleID>'||
+                '<statuscode>'||l_statuscodearray(i)||'</statuscode>'||
+                '<receiveddate>'||l_receiveddatearray(i)||'</receiveddate>'||
+                '<correctionsetid>'||l_correctionsetidarray(i)||'</correctionsetid>'||
+                '</deduction>';
+            ELSE
+IF i_debug_print > 0 THEN dbms_output.put_line('BEFORE1: o_user_details_CLOB='||o_user_details_CLOB); END IF;
+              IF o_user_details_CLOB IS NOT NULL THEN o_user_details_CLOB := o_user_details_CLOB || crlf; END IF;
+              o_user_details_CLOB := o_user_details_CLOB ||
+                l_IC||'|'||
+                i_concernroleid||'|'||
+                l_caseid||'|'||
+                l_evidenceidarray(i)||'|'||
+                l_statuscodearray(i)||'|'||
+                l_receiveddatearray(i)||'|'||
+                l_correctionsetidarray(i)||'|'||
+                ded_deductionType||'|'||
+                ded_deductionDescription||'|'||
+                ded_amount||'|'||
+                ded_frequencyCode||'|'||
+                ded_frequency||'|'||
+                ded_startDate||'|'||
+                ded_endDate||'|'||
+                ded_caseParticipantRoleID||'|';           
+            END IF; /*  i_output_format = 1 */
+          END LOOP; /* FOR i IN 1..l_evidenceidarray.count */
+        END LOOP; /* FOR i IN 1..l_casereferencearray.count  */
+     ELSE o_response_code := 'ERROR'; o_response_text := 'Error : ' || sqlerrm; RETURN;
+  END CASE;
+  IF o_user_details_CLOB IS NULL THEN
+    o_response_code := 'NO_DATA_FOUND'; 
+    o_response_text := 'No Deduction data found for input concernroleid and generated caseid: ' || i_concernroleid || ' ' || l_caseid;
+  ELSE
+    o_response_code := 'DATA_FOUND'; 
+    o_response_text := 'Deduction data found for input concernroleid and generated caseid: ' || i_concernroleid || ' ' || l_caseid;
+  END IF;
+  IF i_output_format = 1 THEN
+    o_user_details_CLOB := '<deductions>' || o_user_details_CLOB || '</deductions>';
+    IF i_add_header <> 0 THEN o_user_details_CLOB := '<?xml version="1.0" standalone="yes"?>' || o_user_details_CLOB; END IF;
+  END IF;
+  RETURN;
+EXCEPTION
+    WHEN NO_DATA_FOUND THEN
+IF i_debug_print > 0 THEN dbms_output.put_line('Error Code:'||SQLCODE||chr(10)||'Error Text:'||SQLERRM); END IF;
+END; /* Execution */
+END; /* DECLARE */

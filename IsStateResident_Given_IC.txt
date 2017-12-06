@@ -1,0 +1,154 @@
+create or replace 
+PROCEDURE IsStateResident_Given_IC
+(
+ i_IC                   IN /* schemaname */ CASEHEADER.CASEREFERENCE%TYPE,
+ i_CRID                   IN /* schemaname */ CASEHEADER.CONCERNROLEID%TYPE, /* single CRID */
+ i_debug_print          IN                  INTEGER DEFAULT 0, /* 0 ==> don't print, 1 ==> print */
+ i_add_header           IN                  INTEGER DEFAULT 1, /* 0 ==> no header, 1 ==> add header */
+ i_output_format        IN                  INTEGER DEFAULT 1, /* 1 ==> XML, 2 ==> pipe-delimited */
+ o_response_code        OUT                 VARCHAR2,
+ o_response_text        OUT                 VARCHAR2,
+ o_user_details_CLOB    OUT                 CLOB  
+)
+IS
+BEGIN
+DECLARE
+--  tabs                    tabsarray;
+  crlf                    VARCHAR2(2) := chr(13)||chr(10);
+  i                       INTEGER;
+  RC                      varchar2(30);
+  RM                      varchar2(1000);
+  v_ret                   CLOB;
+  --l_IC_List               VARCHAR2(10000); /* Allow for multiple ICs to be input */
+  --IC_array                apex_application_global.vc_arr2;
+  l_caseid                CASEHEADER.CASEID%TYPE;
+  --l_evidenceid            DYNAMICEVIDENCEDATAATTRIBUTE.EVIDENCEID%TYPE;
+  l_successionid          NUMBER := NULL;
+  l_effectivefrom         DATE;
+  nextEndDate             VARCHAR2(4000) := '';
+  TYPE char_table_type IS VARRAY(40) OF CASEHEADER.CASEREFERENCE%TYPE;
+  TYPE numbers_table_type IS VARRAY(40) OF NUMBER;
+  TYPE dates_table_type   IS VARRAY(40) OF DATE;
+  l_concernroleid               CASEHEADER.CONCERNROLEID%TYPE;
+  l_caseidarray                 numbers_table_type;
+  l_casereferencearray          char_table_type;
+  l_lastupdatedbyarray          char_table_type;
+  l_participantarray            numbers_table_type;
+  l_successionidarray           numbers_table_type;
+  l_evidenceidarray             numbers_table_type;
+  l_effectivefromarray          dates_table_type;
+  l_rankarray                   numbers_table_type;
+  isStateResident               VARCHAR2(40) := '';
+  residenceReason                   VARCHAR2(4000) := '';
+  startDate                             VARCHAR2(4000) := '';
+  endDate                                 VARCHAR2(4000) := '';
+  comments                      VARCHAR2(4000) := '';
+  temporaryAbsence              VARCHAR2(4000) := '';
+  l_caseParticipantRoleID             VARCHAR2(4000) := '';
+  
+BEGIN
+  --LOOP
+  SELECT CASEID INTO l_caseid FROM CASEHEADER WHERE CASEREFERENCE = i_IC;
+  l_concernroleid := i_CRID;
+IF i_debug_print > 0 THEN dbms_output.put_line('l_caseid/l_concernroleid='||l_caseid||'/'||l_concernroleid); END IF;    
+IF i_debug_print > 0 THEN dbms_output.put_line('IC='||i_IC); END IF;    
+    SELECT DISTINCT ED.RELATEDID, ED.PARTICIPANTID, ED.SUCCESSIONID, ED.EFFECTIVEFROM, ED.LASTUPDATEDBY, RANK() OVER (PARTITION BY ED.PARTICIPANTID ORDER BY ED.RECEIVEDDATE DESC, ED.LASTUPDATEDON DESC) 
+      BULK COLLECT INTO l_evidenceidarray, l_participantarray, l_successionidarray, l_effectivefromarray, l_lastupdatedbyarray, l_rankarray
+      FROM EVIDENCEDESCRIPTOR ED, CASEPARTICIPANTROLE CPR WHERE ED.STATUSCODE = 'EDS1' /* ACTIVE */ AND ED.EVIDENCETYPE = 'DET0026027' /* Application isStateResident */
+        AND ED.PARTICIPANTID = i_CRID AND CPR.PARTICIPANTROLEID = i_CRID AND CPR.TYPECODE IN ('PRI', 'MEM'); 
+IF i_debug_print > 0 THEN dbms_output.put_line('l_evidenceidarray.count='||l_evidenceidarray.count); END IF;    
+    FOR j IN 1..l_evidenceidarray.count
+    LOOP
+IF i_debug_print > 0 THEN dbms_output.put_line('l_rankarray('||j||')='||l_rankarray(j)); END IF;
+IF i_debug_print > 0 THEN dbms_output.put_line('l_successionidarray('||j||')='||l_successionidarray(j)); END IF;
+IF i_debug_print > 0 THEN dbms_output.put_line('l_effectivefromarray('||j||')='||l_effectivefromarray(j)); END IF;
+IF i_debug_print > 0 THEN dbms_output.put_line('l_evidenceidarray('||j||')='||l_evidenceidarray(j)); END IF;
+IF i_debug_print > 0 THEN dbms_output.put_line('l_participantarray('||j||')='||l_participantarray(j)); END IF;
+IF i_debug_print > 0 THEN dbms_output.put_line('l_lastupdatedbyarray('||j||')='||l_lastupdatedbyarray(j)); END IF;
+      IF l_rankarray(j) = 1 THEN
+        BEGIN SELECT VALUE INTO isStateResident FROM DYNAMICEVIDENCEDATAATTRIBUTE WHERE EVIDENCEID = l_evidenceidarray(j) AND NAME = 'isStateResident';
+        EXCEPTION WHEN NO_DATA_FOUND THEN null; END; --Do nothing
+        BEGIN SELECT VALUE INTO residenceReason FROM DYNAMICEVIDENCEDATAATTRIBUTE WHERE EVIDENCEID = l_evidenceidarray(j) AND NAME = 'residenceReason';
+        EXCEPTION WHEN NO_DATA_FOUND THEN null; END; --Do nothing
+        BEGIN SELECT VALUE INTO startDate FROM DYNAMICEVIDENCEDATAATTRIBUTE WHERE EVIDENCEID = l_evidenceidarray(j) AND NAME = 'startDate'; 
+        EXCEPTION WHEN NO_DATA_FOUND THEN null; END; --Do nothing
+IF i_debug_print > 0 THEN dbms_output.put_line('startDate0='||startDate); END IF;
+IF i_debug_print > 0 THEN dbms_output.put_line('l_effectivefromarray(j)='||l_effectivefromarray(j)); END IF;
+        IF l_effectivefromarray(j) IS NOT NULL THEN startDate := TO_CHAR(l_effectivefromarray(j), 'YYYYMMDD'); END IF;
+IF i_debug_print > 0 THEN dbms_output.put_line('startDate1='||startDate); END IF;
+IF i_debug_print > 0 THEN dbms_output.put_line('TO_CHAR(TO_DATE(startDate) - 1)='||TO_CHAR(TO_DATE(startDate, 'YYYYMMDD') - 1)); END IF;
+        nextEndDate := TO_CHAR(TO_DATE(startDate, 'YYYYMMDD') - 1);
+IF i_debug_print > 0 THEN dbms_output.put_line('nextEndDate='||nextEndDate); END IF;
+        BEGIN SELECT VALUE INTO endDate FROM DYNAMICEVIDENCEDATAATTRIBUTE WHERE EVIDENCEID = l_evidenceidarray(j) AND NAME = 'endDate';
+        EXCEPTION WHEN NO_DATA_FOUND THEN null; END; --Do nothing
+IF i_debug_print > 0 THEN dbms_output.put_line('endDate='||endDate); END IF;
+        IF l_rankarray(j) > 1 THEN endDate := nextEndDate; END IF;
+IF i_debug_print > 0 THEN dbms_output.put_line('j/endDate='||j||'/'||endDate); END IF;
+        BEGIN SELECT VALUE INTO temporaryAbsence FROM DYNAMICEVIDENCEDATAATTRIBUTE WHERE EVIDENCEID = l_evidenceidarray(j) AND NAME = 'temporaryAbsence';
+        EXCEPTION WHEN NO_DATA_FOUND THEN null; END; --Do nothing
+        BEGIN SELECT VALUE INTO comments FROM DYNAMICEVIDENCEDATAATTRIBUTE WHERE EVIDENCEID = l_evidenceidarray(j) AND NAME = 'comments';
+        EXCEPTION WHEN NO_DATA_FOUND THEN null; END; --Do nothing
+        BEGIN SELECT VALUE INTO l_caseParticipantRoleID FROM DYNAMICEVIDENCEDATAATTRIBUTE WHERE EVIDENCEID = l_evidenceidarray(j) AND NAME = 'caseParticipantRoleID';
+        EXCEPTION WHEN NO_DATA_FOUND THEN null; END; --Do nothing
+        o_response_code := 'DATA_FOUND'; 
+IF i_debug_print > 0 THEN dbms_output.put_line('o_response_code='||o_response_code); END IF;
+        o_response_text := 'Is State Resident data found for input IC: ' || i_IC; 
+IF i_debug_print > 0 THEN dbms_output.put_line('o_response_text='||o_response_text); END IF;
+        IF endDate IS NULL THEN
+IF i_debug_print > 0 THEN dbms_output.put_line('For j='||j||', endDate IS NULL'); END IF;
+          IF i_output_format = 1 THEN /* XML */
+            o_user_details_CLOB := o_user_details_CLOB ||
+              '<filer_IC>'||i_IC||'</filer_IC>'||
+              '<is_resident>'||isStateResident||'</is_resident>'||
+              '<residenceReason>'||residenceReason||'</residenceReason>'||
+              '<startDate>'||startDate||'</startDate>'||
+              '<endDate>'||endDate||'</endDate>'||    
+              '<temporaryAbsence>'||temporaryAbsence||'</temporaryAbsence>'||
+              '<comments>'||comments||'</comments>'||
+              '<caseParticipantRoleID>'||l_caseParticipantRoleID||'</caseParticipantRoleID>'||
+              '<participantID>'||l_participantarray(j)||'</participantID>'||
+              '<evidenceID>'||l_evidenceidarray(j)||'</evidenceID>'              ;
+          ELSE
+            o_user_details_CLOB := o_user_details_CLOB || crlf ||
+              i_IC||'|'||
+              l_evidenceidarray(j)||'|'||
+              l_concernroleid||'|'||
+              l_caseid||'|'||
+              isStateResident||'|'||
+              residenceReason||'|'||
+              startDate||'|'||
+              endDate||'|'||
+              temporaryAbsence||'|'||
+              comments||'|'||
+              l_caseParticipantRoleID||'|'||
+              l_participantarray(j)||'|'||
+              l_lastupdatedbyarray(j)||'|'
+              ;
+          END IF; /* i_output_format = 1  */
+        END IF; /* endDate IS NULL */
+      END IF; /* l_rankarray(j) = 1 */
+    END LOOP; /* j IN 1..l_evidenceidarray.count */        
+  --END LOOP; /* i IN 1..IC_array.count */ 
+  IF i_output_format = 1
+  THEN
+    IF l_evidenceidarray.count = 0  /* No evidence found for this IC/CRID combination */
+    THEN 
+      o_user_details_CLOB := '<is_resident></is_resident>'; 
+      o_response_code := 'NO_DATA_FOUND';
+      o_response_text := 'Is State Resident data not found for input IC: ' || i_IC || ', CONCERNROLEID: ' || I_CRID;
+    END IF;
+    o_user_details_CLOB := '<is_resident_evidence>' || o_user_details_CLOB || '</is_resident_evidence>';
+    IF i_add_header = 1 
+    THEN
+      o_user_details_CLOB := '<?xml version="1.0" standalone="yes"?>' || o_user_details_CLOB;
+    END IF;
+  END IF;
+IF i_debug_print > 0 THEN dbms_output.put_line('At end o_response_code='||o_response_code); END IF;
+IF i_debug_print > 0 THEN dbms_output.put_line('At end o_response_text='||o_response_text); END IF;
+IF i_debug_print > 0 THEN dbms_output.put_line('At end o_user_details_CLOB='||o_user_details_CLOB); END IF;
+  RETURN;
+EXCEPTION
+    WHEN NO_DATA_FOUND THEN
+IF i_debug_print > 0 THEN dbms_output.put_line('Error Code:'||SQLCODE||chr(10)||'Error Text:'||SQLERRM); END IF;
+END; /* Execution */
+END; /* DECLARE */

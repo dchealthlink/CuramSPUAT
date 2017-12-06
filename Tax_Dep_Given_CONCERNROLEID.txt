@@ -1,0 +1,470 @@
+create or replace 
+PROCEDURE Tax_Dep_Given_CONCERNROLEID
+(
+ i_concernroleid        IN /* schemaname */ CASEHEADER.CONCERNROLEID%TYPE,
+ i_debug_print          IN                  INTEGER DEFAULT 0, /* 0 ==> don't print, 1 ==> print */
+ i_add_header           IN                  INTEGER DEFAULT 1, /* 0 ==> no header, 1 ==> add header */
+ i_output_format        IN                  INTEGER DEFAULT 1, /* 1 ==> XML, 2 ==> pipe-delimited */
+ o_response_code        OUT                 VARCHAR2,
+ o_response_text        OUT                 VARCHAR2,
+ o_user_details_CLOB    OUT                 CLOB  
+)
+IS
+BEGIN
+DECLARE
+--  tabs                        tabsarray;
+  crlf                    VARCHAR2(2) := chr(13)||chr(10);
+  i                       INTEGER;
+  j                       INTEGER;
+  RC                      varchar2(30);
+  RM                      varchar2(1000);
+  v_ret                   CLOB;
+  i_IC                          CASEHEADER.CASEREFERENCE%TYPE;
+  l_IC                          VARCHAR2(50); /* Allow for multiple ICs to be reported back */
+  l_caseid                      CASEHEADER.CASEID%TYPE;
+  l_concernroleid               CASEHEADER.CONCERNROLEID%TYPE;
+  l_evidenceid                  DYNAMICEVIDENCEDATAATTRIBUTE.EVIDENCEID%TYPE;
+  l_successionid                NUMBER := NULL;
+  l_effectivefrom               DATE;
+  l_issingleevidence            BOOLEAN;
+  evidenceFound                 BOOLEAN;
+  l_successionid                NUMBER := NULL;
+  l_effectivefrom               DATE;
+  nextEndDate                   VARCHAR2(4000) := '';
+  l_first_of_the_year           VARCHAR2(30);
+  TYPE char_table_type IS VARRAY(40) OF CASEHEADER.CASEREFERENCE%TYPE;
+  TYPE numbers_table_type IS VARRAY(40) OF NUMBER;
+  TYPE dates_table_type   IS VARRAY(40) OF DATE;
+  l_caseidarray                 numbers_table_type;
+  l_casereferencearray          char_table_type;
+  l_participantarray            numbers_table_type;
+  l_successionidarray           numbers_table_type;
+  l_evidencetypearray           char_table_type;
+  l_evidenceidarray             numbers_table_type;
+  l_evidenceidarray_tmp         numbers_table_type;
+  l_effectivefromarray          dates_table_type;
+  l_caseparticipantarray        numbers_table_type;
+  l_rankarray                   numbers_table_type;
+  l_participant                 NUMBER;
+  l_caseparticipantroleid       NUMBER := NULL;
+  l_dob                         CHAR(8) := '';
+  l_firstname                   VARCHAR2(65) := '';
+  l_lastname                    VARCHAR2(65) := '';
+  l_issingleevidence            BOOLEAN;
+  relatedFilers                 VARCHAR2(1000);
+  tfs_startDate                 VARCHAR2(4000) := '';
+  tfs_taxFilingTogether         VARCHAR2(4000) := '';
+  tfs_isClaimedAsDeOfExtPerson  VARCHAR2(4000) := '';
+  tfs_comments                  VARCHAR2(4000) := '';
+  tfs_endDate                   VARCHAR2(4000) := '';
+  tfs_caseParticipantRoleID     VARCHAR2(4000) := '';
+  tfs_taxFilingStatus           VARCHAR2(4000) := '';
+  tr_startDate                  VARCHAR2(4000) := '';
+  tr_comments                   VARCHAR2(4000) := '';
+  tr_endDate                    VARCHAR2(4000) := '';
+  tr_relTaxDepCasePartRoleID    VARCHAR2(4000) := '';
+BEGIN
+  l_evidenceidarray := numbers_table_type(100); /* initialize */
+  l_evidencetypearray := char_table_type(100); /* initialize */
+  l_concernroleid := i_concernroleid;
+IF i_debug_print > 0 THEN dbms_output.put_line('START - params: i_concernroleid='||i_concernroleid||' i_debug_print='||i_debug_print||' i_add_header='||i_add_header||' i_output_format='||i_output_format); END IF;
+
+/* Find ALL cases this concernroleid is involved in - other concernroleids may be found */
+  SELECT DISTINCT CPR.PARTICIPANTROLEID, CH.CASEREFERENCE, CH.CASEID BULK COLLECT INTO l_participantarray, l_casereferencearray, l_caseidarray 
+    FROM CASEHEADER CH, CASEPARTICIPANTROLE CPR WHERE CH.CASEREFERENCE IN (SELECT DISTINCT CH.CASEREFERENCE FROM CASEHEADER CH, CASEPARTICIPANTROLE CPR 
+    WHERE CPR.PARTICIPANTROLEID = l_concernroleid AND CH.CASEID = CPR.CASEID AND CPR.TYPECODE IN ('PRI', 'MEM') AND CH.CASETYPECODE = 'CT5' /* Integrated Case */ AND CH.STATUSCODE = 'CS4'/* OPEN */) 
+          AND CPR.TYPECODE IN ('PRI', 'MEM') AND CH.CASEID = CPR.CASEID AND CH.CASETYPECODE = 'CT5' /* Integrated Case */ AND CH.STATUSCODE = 'CS4'/* OPEN */ ;  
+
+IF i_debug_print > 0 THEN dbms_output.put_line('l_casereferencearray.count='||l_casereferencearray.count); END IF;
+  CASE 
+     WHEN l_casereferencearray.count = 0 THEN 
+        o_response_code := 'NO_DATA_FOUND'; 
+        o_response_text := 'No IC found for input concernroleid: ' || l_concernroleid; 
+        l_IC := 'NO ICs';        
+     WHEN l_casereferencearray.count >= 1 THEN
+IF i_debug_print > 0 THEN dbms_output.put_line('l_concernroleid='||l_concernroleid); END IF;
+IF i_debug_print > 0 THEN
+  FOR i IN 1..l_casereferencearray.count
+  LOOP
+    dbms_output.put_line('l_casereferencearray('||i||')='||l_casereferencearray(i));
+    dbms_output.put_line('l_participantarray('||i||')='||l_participantarray(i));
+    dbms_output.put_line('l_caseidarray('||i||')='||l_caseidarray(i));
+  END LOOP;
+END IF;
+        FOR i IN 1..l_casereferencearray.count /* find caseid that matches input concernroleid and yields results */
+        LOOP
+IF i_debug_print > 0 THEN dbms_output.put_line('In loop l_concernroleid='||l_concernroleid||' l_participantarray('||i||')='||l_participantarray(i)); END IF;
+          IF l_participantarray(i) <> l_concernroleid THEN 
+            CONTINUE;
+          ELSE 
+            IF o_response_text IS NULL THEN 
+              o_response_text := l_casereferencearray(i);
+            ELSE
+              o_response_text := o_response_text || ', ' || l_casereferencearray(i);
+            END IF;
+            l_caseid := l_caseidarray(i);
+            l_IC := o_response_text;
+          END IF;
+IF i_debug_print > 0 THEN dbms_output.put_line('l_IC='||l_IC||' l_caseid='||l_caseid||' l_concernroleid='||l_concernroleid); END IF;
+
+/* Find latest active tax filer/dependent values for this person and this IC and this evidence's history */
+          SELECT ED.EVIDENCETYPE, ED.SUCCESSIONID, TO_DATE(TO_CHAR(EFFECTIVEFROM, 'YYYYMMDD'), 'YYYYMMDD'), RELATEDID, DENSE_RANK() OVER (PARTITION BY ED.SUCCESSIONID ORDER BY ED.SUCCESSIONID, NVL(ED.EFFECTIVEFROM,TO_DATE('00010101', 'YYYYMMDD')) DESC) Succession_Rank 
+            BULK COLLECT INTO  l_evidencetypearray, l_successionidarray, l_effectivefromarray, l_evidenceidarray, l_rankarray
+            FROM EVIDENCEDESCRIPTOR ED WHERE ED.PARTICIPANTID = l_concernroleid AND ED.CASEID = l_caseid AND 
+              ED.EVIDENCETYPE = 'DET0026002' /* Tax Filing Status */ AND ED.STATUSCODE = 'EDS1';
+
+IF i_debug_print > 0 THEN dbms_output.put_line('DEBUGEVIDENCEDESCRIPTOR1: l_evidenceidarray.count= '||l_evidenceidarray.count); END IF;
+          FOR i IN 1..l_evidenceidarray.count
+          LOOP
+IF i_debug_print > 0 THEN dbms_output.put_line('l_rankarray('||i||')='||l_rankarray(i)); END IF;
+IF i_debug_print > 0 THEN dbms_output.put_line('l_successionidarray('||i||')='||l_successionidarray(i)); END IF;
+IF i_debug_print > 0 THEN dbms_output.put_line('l_effectivefromarray('||i||')='||l_effectivefromarray(i)); END IF;
+IF i_debug_print > 0 THEN dbms_output.put_line('l_evidenceidarray('||i||')='||l_evidenceidarray(i)); END IF;
+IF i_debug_print > 0 THEN dbms_output.put_line(' l_evidencetypearray('||i||')='|| l_evidencetypearray(i)); END IF;
+IF i_debug_print > 0 THEN dbms_output.put_line('DEBUGEVIDENCEDESCRIPTOR1: l_evidenceidarray.count= '||l_evidenceidarray.count); END IF;
+            l_evidenceID := l_evidenceidarray(i); /* save for output */
+            BEGIN SELECT VALUE INTO tfs_taxFilingStatus FROM DYNAMICEVIDENCEDATAATTRIBUTE WHERE EVIDENCEID = l_evidenceidarray(i) AND NAME = 'taxFilingStatus';
+            EXCEPTION WHEN NO_DATA_FOUND THEN null; END; --Do nothing
+            BEGIN SELECT VALUE INTO tfs_startDate FROM DYNAMICEVIDENCEDATAATTRIBUTE WHERE EVIDENCEID = l_evidenceidarray(i) AND NAME = 'startDate';
+            EXCEPTION WHEN NO_DATA_FOUND THEN null; END; --Do nothing
+            BEGIN SELECT VALUE INTO tfs_taxFilingTogether FROM DYNAMICEVIDENCEDATAATTRIBUTE WHERE EVIDENCEID = l_evidenceidarray(i) AND NAME = 'taxFilingTogether';
+            EXCEPTION WHEN NO_DATA_FOUND THEN null; END; --Do nothing
+            BEGIN SELECT VALUE INTO tfs_isClaimedAsDeOfExtPerson FROM DYNAMICEVIDENCEDATAATTRIBUTE WHERE EVIDENCEID = l_evidenceidarray(i) AND NAME = 'isClaimedAsDependentOfExternalPerson';
+            EXCEPTION WHEN NO_DATA_FOUND THEN null; END; --Do nothing
+            BEGIN SELECT VALUE INTO tfs_comments FROM DYNAMICEVIDENCEDATAATTRIBUTE WHERE EVIDENCEID = l_evidenceidarray(i) AND NAME = 'comments';
+            EXCEPTION WHEN NO_DATA_FOUND THEN null; END; --Do nothing
+            BEGIN SELECT VALUE INTO tfs_endDate FROM DYNAMICEVIDENCEDATAATTRIBUTE WHERE EVIDENCEID = l_evidenceidarray(i) AND NAME = 'endDate';
+            EXCEPTION WHEN NO_DATA_FOUND THEN null; END; --Do nothing
+            BEGIN SELECT VALUE INTO tfs_caseParticipantRoleID FROM DYNAMICEVIDENCEDATAATTRIBUTE WHERE EVIDENCEID = l_evidenceidarray(i) AND NAME = 'caseParticipantRoleID';
+            EXCEPTION WHEN NO_DATA_FOUND THEN null; END; --Do nothing
+            IF i_output_format = 1 THEN /* XML */
+              o_response_text := 'Multiple Tax Status evidences found for input concernroleid and caseid: '  || l_concernroleid || ' ' || l_caseid; 
+              o_response_code := 'MULTIPLE_EVIDENCES_FOUND';
+IF i_debug_print > 0 THEN dbms_output.put_line('DET0026002tfs_taxFilingStatus='||tfs_taxFilingStatus); END IF;
+IF i_debug_print > 0 THEN dbms_output.put_line('DET0026002tfs_taxFilingTogether='||tfs_taxFilingTogether); END IF;
+IF i_debug_print > 0 THEN dbms_output.put_line('DET0026002tfs_startDate='||tfs_startDate); END IF;
+IF i_debug_print > 0 THEN dbms_output.put_line('DET0026002tfs_caseParticipantRoleID='||tfs_caseParticipantRoleID); END IF;
+              o_response_code := 'DATA_FOUND'; 
+IF i_debug_print > 0 THEN dbms_output.put_line('o_response_code='||o_response_code); END IF;
+              o_response_text := 'Tax Filing Status data found for input concernroleid and generated caseid: ' || l_concernroleid || ' ' || l_caseid; 
+IF i_debug_print > 0 THEN dbms_output.put_line('o_response_text='||o_response_text); END IF;
+              BEGIN SELECT CPR.CASEPARTICIPANTROLEID, TO_CHAR(PR.DATEOFBIRTH,'YYYYMMDD'), AN.FIRSTFORENAME, AN.SURNAME into l_caseparticipantroleid, l_dob, l_firstname, l_lastname
+                FROM CASEPARTICIPANTROLE CPR, ALTERNATENAME AN, PERSON PR WHERE 
+                  CPR.CASEID = l_caseid AND CPR.PARTICIPANTROLEID = l_concernroleid AND AN.CONCERNROLEID = l_concernroleid AND PR.CONCERNROLEID = l_concernroleid AND CPR.TYPECODE IN ('PRI','MEM');
+              EXCEPTION WHEN NO_DATA_FOUND THEN null; END; --Do nothing
+IF i_debug_print > 0 THEN dbms_output.put_line('l_caseparticipantroleid/l_dob/l_firstname/l_lastname='||l_caseparticipantroleid||'/'||l_dob||'/'||l_firstname||'/'||l_lastname); END IF;
+              o_user_details_CLOB :=  
+                '<tfs_evidenceID>'||l_evidenceidarray(i)||'</tfs_evidenceID>'||
+                '<tfs_taxFilingStatus>'||tfs_taxFilingStatus||
+                '<First_Name>'||l_firstname||'</First_Name>'||
+                '<Last_Name>'||l_lastname||'</Last_Name>'||
+                '<Dob>'||l_dob||'</Dob>'||
+                '</tfs_taxFilingStatus>'||
+                '<tfs_taxFilingTogether>'||tfs_taxFilingTogether||'</tfs_taxFilingTogether>'||
+                '<tfs_isClaimedAsDeOfExtPerson>'||tfs_isClaimedAsDeOfExtPerson||'</tfs_isClaimedAsDeOfExtPerson>'||
+                '<tfs_startDate>'||tfs_startDate||'</tfs_startDate>'||
+                '<tfs_endDate>'||tfs_endDate||'</tfs_endDate>'||
+                '<tfs_caseParticipantRoleID>'||tfs_caseParticipantRoleID||'</tfs_caseParticipantRoleID>'||
+                '<tfs_ParticipantRoleID>'||l_concernroleid||'</tfs_ParticipantRoleID>'||
+                '<tfs_comments>'||tfs_comments||'</tfs_comments>'
+                ;
+            ELSE
+IF i_debug_print > 0 THEN dbms_output.put_line('i/tfs_taxFilingStatus='||i||'/'||tfs_taxFilingStatus); END IF;
+              IF i > 1 THEN o_user_details_CLOB := o_user_details_CLOB || crlf; END IF;
+              o_user_details_CLOB := o_user_details_CLOB ||
+                l_IC||'|'||
+                l_concernroleid||'|'||
+                l_caseid||'|'||
+                l_evidenceidarray(i)||'|'||
+                tfs_taxFilingStatus||'|'||
+                l_firstname||'|'||
+                l_lastname||'|'||
+                l_dob||'|'||
+                tfs_taxFilingTogether||'|'||
+                tfs_startDate||'|'||
+                tfs_endDate||'|'||
+                tfs_caseParticipantRoleID||'|'||
+                tfs_comments||'|'
+               ;
+            END IF;
+          END LOOP; /* FOR i IN 1..l_evidenceidarray.count */
+  CASE
+    WHEN tfs_taxFilingStatus = 'TFS26304' /* Non Filer */ THEN  /* no dependents and not a dependent */
+      IF i_output_format = 1 THEN /* XML */
+        o_user_details_CLOB :=
+          '<tfs_evidenceID>'||l_evidenceID||'</tfs_evidenceID>'||
+          '<tfs_taxFilingStatus>'||tfs_taxFilingStatus||'</tfs_taxFilingStatus>'||
+          '<First_Name>'||l_firstname||'</First_Name>'||
+          '<Last_Name>'||l_lastname||'</Last_Name>'||
+          '<Dob>'||l_dob||'</Dob>'||
+          '<tfs_taxFilingTogether>'||tfs_taxFilingTogether||'</tfs_taxFilingTogether>'||
+          '<tfs_isClaimedAsDeOfExtPerson>'||tfs_isClaimedAsDeOfExtPerson||'</tfs_isClaimedAsDeOfExtPerson>'||
+          '<tfs_startDate>'||tfs_startDate||'</tfs_startDate>'||
+          '<tfs_endDate>'||tfs_endDate||'</tfs_endDate>'||
+          '<tfs_caseParticipantRoleID>'||tfs_caseParticipantRoleID||'</tfs_caseParticipantRoleID>'||
+          '<tfs_ParticipantRoleID>'||l_concernroleid||'</tfs_ParticipantRoleID>'||
+          '<tfs_comments>'||tfs_comments||'</tfs_comments>'
+          ;
+      ELSE
+        o_user_details_CLOB :=  
+          l_IC||'|'||
+          l_concernroleid||'|'||
+          l_caseid||'|'||
+          l_evidenceID||'|'||
+          tfs_taxFilingStatus||'|'||
+          l_firstname||'|'||
+          l_lastname||'|'||
+          l_dob||'|'||
+          tfs_taxFilingTogether||'|'||
+          tfs_startDate||'|'||
+          tfs_endDate||'|'||
+          tfs_caseParticipantRoleID||'|'||
+          tfs_comments||'|'
+         ;
+      END IF;
+IF i_debug_print > 0 THEN dbms_output.put_line('TFS26304 tfs_startDate='||tfs_startDate); END IF;
+    WHEN tfs_taxFilingStatus = 'TFS26302' /* Tax Dependent */ THEN /* find any filers, if they exist */
+IF i_debug_print > 0 THEN dbms_output.put_line('in TFS26302 l_caseid/l_concernroleid='||l_caseid||'/'||l_concernroleid); END IF;
+      BEGIN 
+          SELECT DISTINCT PARTICIPANTROLEID BULK COLLECT INTO l_participantarray FROM CASEPARTICIPANTROLE WHERE TYPECODE IN ('PRI', 'MEM') AND RECORDSTATUS = 'RST1' AND 
+          PARTICIPANTROLEID <> l_concernroleid AND CASEID = l_caseid AND 
+          CASEPARTICIPANTROLEID IN (SELECT VALUE FROM DYNAMICEVIDENCEDATAATTRIBUTE WHERE NAME = 'caseParticipantRoleID' AND 
+          EVIDENCEID IN (SELECT RELATEDID FROM EVIDENCEDESCRIPTOR WHERE EVIDENCETYPE = 'DET0026002' AND CASEID = l_caseid));
+        EXCEPTION WHEN NO_DATA_FOUND THEN null; 
+      END;
+IF i_debug_print > 0 THEN dbms_output.put_line('in TFS26302 l_participantarray.count='||l_participantarray.count); END IF;
+      l_evidenceidarray.DELETE; /* empty array  to start */
+      FOR k IN 1..l_participantarray.count /* find all the tax status evidences for potential filers */
+      LOOP
+IF i_debug_print > 0 THEN dbms_output.put_line('in TFS26302 l_participantarray('||k||')='||l_participantarray(k)); END IF;
+        BEGIN          
+          SELECT DISTINCT RELATEDID BULK COLLECT INTO l_evidenceidarray_tmp FROM EVIDENCEDESCRIPTOR WHERE CASEID = l_caseid AND PARTICIPANTID = l_participantarray(k) AND 
+          EVIDENCETYPE = 'DET0026002' AND STATUSCODE = 'EDS1';
+          EXCEPTION WHEN NO_DATA_FOUND THEN null; 
+        END;
+IF i_debug_print > 0 THEN dbms_output.put_line('in TFS26302 l_evidenceidarray_tmp.count='||l_evidenceidarray_tmp.count); END IF;
+        IF k = 1 THEN
+          FOR i IN 1..l_evidenceidarray_tmp.count
+          LOOP
+IF i_debug_print > 0 THEN dbms_output.put_line('in TFS26302 k/i='||k||'/'||i); END IF;
+IF i_debug_print > 0 THEN dbms_output.put_line('in TFS26302 l_evidenceidarray.count='||l_evidenceidarray.count); END IF;
+            l_evidenceidarray.EXTEND;
+IF i_debug_print > 0 THEN dbms_output.put_line('in TFS26302 l_evidenceidarray.count='||l_evidenceidarray.count); END IF;
+            l_evidenceidarray(l_evidenceidarray.LAST) := l_evidenceidarray_tmp(i);
+IF i_debug_print > 0 THEN dbms_output.put_line('in TFS26302 l_evidenceidarray(LAST)='||l_evidenceidarray(l_evidenceidarray.LAST)); END IF;
+IF i_debug_print > 0 THEN dbms_output.put_line('in TFS26302 l_evidenceidarray.count='||l_evidenceidarray.count); END IF;
+          END LOOP;
+        ELSE
+IF i_debug_print > 0 THEN dbms_output.put_line('in TFS26302 l_evidenceidarray.count='||l_evidenceidarray.count); END IF;
+IF i_debug_print > 0 THEN dbms_output.put_line('in TFS26302 l_evidenceidarray.LAST='||l_evidenceidarray.LAST); END IF;
+IF i_debug_print > 0 THEN dbms_output.put_line('in TFS26302 l_evidenceidarray_tmp.count='||l_evidenceidarray_tmp.count); END IF;
+IF i_debug_print > 0 THEN dbms_output.put_line('in TFS26302 l_evidenceidarray_tmp.LAST='||l_evidenceidarray_tmp.LAST); END IF;
+          FOR i IN 1..l_evidenceidarray_tmp.count /* evidenceids */
+          LOOP
+            evidenceFound := FALSE;
+            FOR j IN 1..l_evidenceidarray.count /* saved evidenceids */
+            LOOP
+IF i_debug_print > 0 THEN dbms_output.put_line('in TFS26302 i/j EXTEND='||i||'/'||j); END IF;
+IF i_debug_print > 0 THEN dbms_output.put_line('in TFS26302 l_evidenceidarray.count='||l_evidenceidarray.count); END IF;
+IF i_debug_print > 0 THEN dbms_output.put_line('in TFS26302 l_evidenceidarray_tmp.count='||l_evidenceidarray_tmp.count); END IF;
+              IF l_evidenceidarray(j) = l_evidenceidarray_tmp(i) THEN 
+IF i_debug_print > 0 THEN dbms_output.put_line('in TFS26302 FOUND'); END IF;
+                evidenceFound := TRUE;
+                EXIT; 
+              END IF;
+            END LOOP; /* j */
+            IF NOT evidenceFound THEN 
+IF i_debug_print > 0 THEN dbms_output.put_line('in TFS26302 NOT FOUND'); END IF;
+              l_evidenceidarray.EXTEND; 
+              l_evidenceidarray(l_evidenceidarray.LAST) := l_evidenceidarray_tmp(i); 
+IF i_debug_print > 0 THEN dbms_output.put_line('NOT FOUND l_evidenceidarray(LAST)='||l_evidenceidarray.LAST); END IF;
+IF i_debug_print > 0 THEN dbms_output.put_line('NOT FOUND l_evidenceidarray.count='||l_evidenceidarray.count); END IF;
+            END IF;
+          END LOOP; /* i */
+        END IF;
+      END LOOP; /* k - find all the tax status evidences for potential filers */
+IF i_debug_print > 0 THEN dbms_output.put_line('TFS26302 l_evidenceidarray.count='||l_evidenceidarray.count); END IF;
+      RelatedFilers := ''; /* will hold list of filers for pipe delimited output or ... */
+      IF i_output_format = 1 THEN /* XML */ RelatedFilers := '<relatedFilers>'; END IF;
+      FOR i IN 1..l_evidenceidarray.count
+      LOOP
+        BEGIN 
+          SELECT DISTINCT DEDA1.VALUE BULK COLLECT INTO l_caseparticipantarray FROM DYNAMICEVIDENCEDATAATTRIBUTE DEDA1, DYNAMICEVIDENCEDATAATTRIBUTE DEDA2 WHERE 
+            DEDA1.EVIDENCEID = l_evidenceidarray(i) AND DEDA2.EVIDENCEID = DEDA1.EVIDENCEID AND
+            DEDA1.NAME = 'caseParticipantRoleID'  AND DEDA2.NAME = 'taxFilingStatus' AND DEDA2.VALUE = 'TFS26301';
+          EXCEPTION WHEN NO_DATA_FOUND THEN null;
+        END;
+IF i_debug_print > 0 THEN dbms_output.put_line('TFS26302 l_evidenceidarray('||i||')/l_caseparticipantarray.count='||l_evidenceidarray(i)||'/'||l_caseparticipantarray.count); END IF;
+        FOR j IN 1..l_caseparticipantarray.count
+        LOOP
+IF i_debug_print > 0 THEN dbms_output.put_line('in TFS26302 l_caseparticipantarray('||j||')='||l_caseparticipantarray(j)); END IF;
+          BEGIN 
+            SELECT PARTICIPANTROLEID INTO l_participantarray(j) FROM CASEPARTICIPANTROLE WHERE CASEPARTICIPANTROLEID = l_caseparticipantarray(j);
+            EXCEPTION WHEN NO_DATA_FOUND THEN null;
+          END;
+IF i_debug_print > 0 THEN dbms_output.put_line('in TFS26302 l_participantarray('||j||')='||TO_CHAR(l_participantarray(j))); END IF;
+IF i_debug_print > 0 THEN dbms_output.put_line('in TFS26302 RelatedFilers='||RelatedFilers||'/'); END IF;
+IF i_debug_print > 0 THEN dbms_output.put_line('INSTR(RelatedFilers, TO_CHAR(l_participantarray(j)))='||INSTR(RelatedFilers, TO_CHAR(l_participantarray(j)))||'/'); END IF;  
+          IF RelatedFilers IS NULL OR INSTR(RelatedFilers, TO_CHAR(l_participantarray(j))) = 0 THEN /* add to list of filers */
+            IF i_output_format = 1 THEN /* XML */ 
+              RelatedFilers := RelatedFilers||'<relatedFiler>'||TO_CHAR(l_participantarray(j))||'</relatedFiler>';
+            ELSE 
+              RelatedFilers := RelatedFilers||TO_CHAR(l_participantarray(j))||'|';
+            END IF;
+          END IF;
+IF i_debug_print > 0 THEN dbms_output.put_line('TFS26302 RelatedFilers='||RelatedFilers); END IF;
+        END LOOP; /* j IN 1..l_caseparticipantarray.count */
+      END LOOP; /* k IN 1..l_participantarray */
+IF i_debug_print > 0 THEN dbms_output.put_line('Filer l_participantarray.count='||l_participantarray.count);
+FOR i IN 1..l_participantarray.count
+LOOP
+  dbms_output.put_line('Filer('||i||')='||l_participantarray(i));
+END LOOP;
+END IF;
+      IF i_output_format = 1 THEN /* XML */
+        RelatedFilers := RelatedFilers||'</relatedFilers>';
+        o_user_details_CLOB := 
+          '<tfs_evidenceID>'||l_evidenceID||'</tfs_evidenceID>'||
+          '<tfs_taxFilingStatus>'||tfs_taxFilingStatus||'</tfs_taxFilingStatus>'||
+          '<First_Name>'||l_firstname||'</First_Name>'||
+          '<Last_Name>'||l_lastname||'</Last_Name>'||
+          '<Dob>'||l_dob||'</Dob>'||
+          '<tfs_taxFilingTogether>'||tfs_taxFilingTogether||'</tfs_taxFilingTogether>'||
+          '<tfs_isClaimedAsDeOfExtPerson>'||tfs_isClaimedAsDeOfExtPerson||'</tfs_isClaimedAsDeOfExtPerson>'||
+          '<tfs_startDate>'||tfs_startDate||'</tfs_startDate>'||
+          '<tfs_endDate>'||tfs_endDate||'</tfs_endDate>'||
+          '<tfs_caseParticipantRoleID>'||tfs_caseParticipantRoleID||'</tfs_caseParticipantRoleID>'||
+          '<tfs_ParticipantRoleID>'||l_concernroleid||'</tfs_ParticipantRoleID>'||
+          '<tfs_comments>'||tfs_comments||'</tfs_comments>'||
+          RelatedFilers
+          ;
+      ELSE
+        o_user_details_CLOB :=  
+          l_IC||'|'||
+          l_concernroleid||'|'||
+          l_caseid||'|'||
+          l_evidenceID||'|'||
+          tfs_taxFilingStatus||'|'||
+          l_firstname||'|'||
+          l_lastname||'|'||
+          l_dob||'|'||
+          tfs_taxFilingTogether||'|'||
+          tfs_startDate||'|'||
+          tfs_endDate||'|'||
+          tfs_caseParticipantRoleID||'|'||
+          tfs_comments||'|'||
+          RelatedFilers||'|'
+         ;
+      END IF;
+    WHEN tfs_taxFilingStatus IN ('TFS26301', 'TFS26303') /* Tax Filer or Has a tax filing status of Married Filing Jointly */ THEN /* find any Tax Dependents, if they exist */
+IF i_debug_print > 0 THEN dbms_output.put_line('IN (TFS26301, TFS26303) o_user_details_CLOB='||crlf||o_user_details_CLOB); END IF;
+      BEGIN 
+        SELECT RELATEDID BULK COLLECT INTO l_evidenceidarray FROM EVIDENCEDESCRIPTOR WHERE EVIDENCETYPE = 'DET0026006' AND STATUSCODE = 'EDS1' AND CASEID = l_caseid; 
+IF i_debug_print > 0 THEN dbms_output.put_line('l_evidenceidarray.count='||l_evidenceidarray.count); END IF;
+        EXCEPTION WHEN NO_DATA_FOUND THEN /* No dependents */
+          IF i_output_format = 1 THEN /* XML */
+            o_user_details_CLOB :=
+              '<tfs_evidenceID>'||l_evidenceID||'</tfs_evidenceID>'||
+              '<tfs_taxFilingStatus>'||tfs_taxFilingStatus||'</tfs_taxFilingStatus>'||
+              '<First_Name>'||l_firstname||'</First_Name>'||
+              '<Last_Name>'||l_lastname||'</Last_Name>'||
+              '<Dob>'||l_dob||'</Dob>'||
+              '<tfs_taxFilingTogether>'||tfs_taxFilingTogether||'</tfs_taxFilingTogether>'||
+              '<tfs_isClaimedAsDeOfExtPerson>'||tfs_isClaimedAsDeOfExtPerson||'</tfs_isClaimedAsDeOfExtPerson>'||
+              '<tfs_startDate>'||tfs_startDate||'</tfs_startDate>'||
+              '<tfs_endDate>'||tfs_endDate||'</tfs_endDate>'||
+              '<tfs_caseParticipantRoleID>'||tfs_caseParticipantRoleID||'</tfs_caseParticipantRoleID>'||
+              '<tfs_ParticipantRoleID>'||l_concernroleid||'</tfs_ParticipantRoleID>'||
+              '<tfs_comments>'||tfs_comments||'</tfs_comments>'||
+              '<tax_dependents></tax_dependents>'
+              ;
+          ELSE
+            o_user_details_CLOB :=  
+              l_IC||'|'||
+              l_concernroleid||'|'||
+              l_caseid||'|'||
+              l_evidenceID||'|'||
+              tfs_taxFilingStatus||'|'||
+              l_firstname||'|'||
+              l_lastname||'|'||
+              l_dob||'|'||
+              tfs_taxFilingTogether||'|'||
+              tfs_startDate||'|'||
+              tfs_endDate||'|'||
+              tfs_caseParticipantRoleID||'|'||
+              tfs_comments||'|'
+             ;
+          END IF;
+          GOTO NO_DEPENDENTS_FOUND;
+      END; --Do nothing
+IF i_debug_print > 0 THEN dbms_output.put_line('Dependent l_evidenceidarray.count='||l_evidenceidarray.count); END IF;
+      IF i_output_format = 1 THEN /* XML */ RelatedFilers := '<tax_dependents>'; ELSE RelatedFilers := ''; END IF;
+      FOR i IN 1..l_evidenceidarray.count LOOP
+IF i_debug_print > 0 THEN dbms_output.put_line('Dependent l_participant/l_evidenceidarray('||i||')='||l_participant||'/'||l_evidenceidarray(i)); END IF;
+        BEGIN /* EVIDENCEDESCRIPTOR record points to dependents */
+          SELECT PARTICIPANTROLEID INTO l_participant FROM CASEPARTICIPANTROLE WHERE CASEPARTICIPANTROLEID IN (SELECT VALUE FROM DYNAMICEVIDENCEDATAATTRIBUTE 
+          WHERE NAME = 'relTaxDepCaseParticipantRoleID' and EVIDENCEID = l_evidenceidarray(i)); 
+          EXCEPTION WHEN NO_DATA_FOUND THEN null; 
+        END;
+        IF RelatedFilers IS NULL OR INSTR(RelatedFilers, TO_CHAR(l_participant)) = 0 THEN /* add to list of filers */
+          IF i_output_format = 1 THEN /* XML */
+            RelatedFilers := RelatedFilers||'<tax_dependent>'||TO_CHAR(l_participant)||'</tax_dependent>';
+          ELSE
+            RelatedFilers := RelatedFilers||'|'||TO_CHAR(l_participant);
+          END IF;
+        END IF;
+IF i_debug_print > 0 THEN dbms_output.put_line('TFS26301 RelatedFilers='||RelatedFilers); END IF;
+      END LOOP;
+      IF i_output_format = 1 THEN /* XML */ RelatedFilers := RelatedFilers||'</tax_dependents>'; END IF;
+IF i_debug_print > 0 THEN dbms_output.put_line('TFS26301 i_output_format='||i_output_format); END IF;
+      IF i_output_format = 1 THEN /* XML */
+        o_user_details_CLOB :=
+                            '<tfs_evidenceID>'||l_evidenceID||'</tfs_evidenceID>'||
+                            '<tfs_taxFilingStatus>'||tfs_taxFilingStatus||'</tfs_taxFilingStatus>'||
+                            '<First_Name>'||l_firstname||'</First_Name>'||
+                            '<Last_Name>'||l_lastname||'</Last_Name>'||
+                            '<Dob>'||l_dob||'</Dob>'||
+                            '<tfs_taxFilingTogether>'||tfs_taxFilingTogether||'</tfs_taxFilingTogether>'||
+                            '<tfs_isClaimedAsDeOfExtPerson>'||tfs_isClaimedAsDeOfExtPerson||'</tfs_isClaimedAsDeOfExtPerson>'||
+                            '<tfs_startDate>'||tfs_startDate||'</tfs_startDate>'||
+                            '<tfs_endDate>'||tfs_endDate||'</tfs_endDate>'||
+                            '<tfs_caseParticipantRoleID>'||tfs_caseParticipantRoleID||'</tfs_caseParticipantRoleID>'||
+                            '<tfs_ParticipantRoleID>'||l_concernroleid||'</tfs_ParticipantRoleID>'||
+                            '<tfs_comments>'||tfs_comments||'</tfs_comments>'||
+                            RelatedFilers
+                            ;
+      ELSE
+        o_user_details_CLOB :=  
+                            l_IC||'|'||
+                            l_concernroleid||'|'||
+                            l_caseid||'|'||
+                            l_evidenceID||'|'||
+                            tfs_taxFilingStatus||'|'||
+                            l_firstname||'|'||
+                            l_lastname||'|'||
+                            l_dob||'|'||
+                            tfs_taxFilingTogether||'|'||
+                            tfs_startDate||'|'||
+                            tfs_endDate||'|'||
+                            tfs_caseParticipantRoleID||'|'||
+                            tfs_comments||'|'||
+                            RelatedFilers||'|'
+                           ;
+      END IF;
+<<NO_DEPENDENTS_FOUND>> NULL;
+    ELSE o_response_code := 'NO_DATA_FOUND'; o_response_code := 'Wrong Filer Status Code: ' || tfs_taxFilingStatus; RETURN;
+IF i_debug_print > 0 THEN dbms_output.put_line('END CASE REACHED'); END IF;
+  END CASE;
+  IF i_output_format = 1 
+  THEN
+    o_user_details_CLOB := '<tax_dep_details>' || o_user_details_CLOB || '</tax_dep_details>';
+    IF i_add_header = 1 THEN o_user_details_CLOB := '<?xml version="1.0" standalone="yes"?>'|| o_user_details_CLOB; END IF;
+  END IF;
+  RETURN;
+END LOOP; /* FOR j IN 1..l_casereferencearray.count /* find caseid that matches input concernroleid and yields results */
+END CASE;
+EXCEPTION
+    WHEN NO_DATA_FOUND THEN
+IF i_debug_print > 0 THEN dbms_output.put_line('Error Code:'||SQLCODE||chr(10)||'Error Text:'||SQLERRM); END IF;
+END; /* Execution */
+END; /* DECLARE */

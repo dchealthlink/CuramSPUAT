@@ -1,0 +1,394 @@
+create or replace 
+PROCEDURE Insurance_Given_CONCERNROLEID
+(
+ i_concernroleid        IN /* schemaname */ CASEHEADER.CONCERNROLEID%TYPE,
+ i_debug_print          IN                  INTEGER DEFAULT 0, /* 0 ==> don't print, 1 ==> print */
+ i_add_header           IN                  INTEGER DEFAULT 0, /* 0 ==> no header, 1 ==> add header */
+ i_output_format        IN                  INTEGER DEFAULT 1, /* 1 ==> XML, 2 ==> pipe-delimited */
+ o_response_code        OUT                 VARCHAR2,
+ o_response_text        OUT                 VARCHAR2,
+ o_user_details_CLOB    OUT                 CLOB  
+)
+IS
+BEGIN
+DECLARE
+--  tabs                        tabsarray;
+  crlf                          VARCHAR2(2) := chr(13)||chr(10);
+  i                             INTEGER;
+  RC                            varchar2(30);
+  RM                            varchar2(1000);
+  v_ret                         CLOB;
+  i_IC                          CASEHEADER.CASEREFERENCE%TYPE;
+  l_IC                          CASEHEADER.CASEREFERENCE%TYPE;
+  l_concernroleid               CASEHEADER.CONCERNROLEID%TYPE;
+  l_caseid                      CASEHEADER.CASEID%TYPE;
+  l_evidenceid                  DYNAMICEVIDENCEDATAATTRIBUTE.EVIDENCEID%TYPE;
+  l_caseparticipantroleid       NUMBER := NULL;
+  l_dob                         CHAR(8) := '';
+  l_firstname                   VARCHAR2(65) := '';
+  l_lastname                    VARCHAR2(65) := '';
+  l_planID                      VARCHAR2(25) := '';
+  l_personCost                  VARCHAR2(25) := '';
+  l_planCost                    VARCHAR2(25) := '';
+  l_employerName                VARCHAR2(65) := '';
+  l_employerID                  VARCHAR2(65) := '';
+  l_planExists                  VARCHAR2(6) := '';
+  l_planCoverage                VARCHAR2(65) := '';
+  l_costFrequency               VARCHAR2(20) := '';
+  l_planMEC                     VARCHAR2(6) := '';
+  l_enrollmentStatusCode        VARCHAR2(10) := '';
+  l_eligibleForESI              VARCHAR2(10) := '';
+  l_enrollmentStatus            VARCHAR2(20) := '';
+  l_issingleevidence            BOOLEAN;
+  evidenceFound                 BOOLEAN;
+  l_successionid                NUMBER := NULL;
+  l_effectivefrom               DATE;
+  nextEndDate                   VARCHAR2(4000) := '';
+  l_first_of_the_year           VARCHAR2(30);
+  l_CONCERN_ROLE_ID             CASEHEADER.CONCERNROLEID%TYPE;
+  l_EVIDENCE_STATUS             VARCHAR2(10) := '';
+  l_EFFECTIVE_FROM_DATE         DATE;
+  l_START_DATE                  DATE;
+  l_END_DATE                    DATE;
+  l_Coverage_Status             VARCHAR2(10) := '';
+  l_Is_Minimum_Value_Met        VARCHAR2(6) := '';
+  l_Is_Emp_In_Waiting_Period    VARCHAR2(6) := '';
+  l_Employee_Contribution       VARCHAR2(25) := '';
+  l_planName                    VARCHAR2(65) := '';
+  l_Contribution_Frequency      VARCHAR2(15) := '';
+  l_Employer_ID                 VARCHAR2(65) := '';
+  l_Employer_Name               VARCHAR2(65) := '';
+  l_participant_eligible        VARCHAR2(5) := 'Yes'; /* Assume so */
+  TYPE char_table_type IS VARRAY(40) OF CASEHEADER.CASEREFERENCE%TYPE;
+  TYPE char_table_type2 IS VARRAY(40) OF VARCHAR2(100);
+  TYPE numbers_table_type IS VARRAY(40) OF NUMBER;
+  TYPE dates_table_type   IS VARRAY(40) OF DATE;
+  l_caseidarray                 numbers_table_type;
+  l_casereferencearray          char_table_type;
+  l_statuscodearray             char_table_type;
+  l_receiveddatearray           dates_table_type;
+  l_successionidarray           numbers_table_type;
+  l_correctionsetidarray        char_table_type;
+  l_evidenceidarray             numbers_table_type;
+  l_evidenceidarray_tmp         numbers_table_type;
+  l_effectivefromarray          dates_table_type;
+  l_participantarray            numbers_table_type;
+  l_caseparticipantarray        numbers_table_type;
+  l_rankarray                   numbers_table_type;
+  l_rankarrayx                  numbers_table_type;
+  l_fieldarray                  char_table_type2;
+  l_participant                 NUMBER;
+  l_coverageType                VARCHAR2(100);
+  l_coverageTypeCode            VARCHAR2(100);
+  ins_incomeDescription         VARCHAR2(100);
+  ins_frequency                 VARCHAR2(100);
+  relatedFilers                 VARCHAR2(1000);
+  ins_comments                  VARCHAR2(4000) := '';
+  ins_endDate                   VARCHAR2(4000) := '';
+  ins_incomeType                VARCHAR2(4000) := '';
+  ins_taxformType               VARCHAR2(4000) := '';
+  ins_state                     VARCHAR2(4000) := '';
+  ins_street2                   VARCHAR2(4000) := '';
+  ins_zipCode                   VARCHAR2(4000) := '';
+  ins_employer                  VARCHAR2(4000) := '';
+  ins_source                    VARCHAR2(4000) := '';
+  ins_frequencyCode             VARCHAR2(4000) := '';
+  ins_city                      VARCHAR2(4000) := '';
+  ins_amount                    VARCHAR2(4000) := '';
+  ins_caseParticipantRoleID     VARCHAR2(4000) := '';
+  ins_street1                   VARCHAR2(4000) := '';
+  ins_zipCodePlusFour           VARCHAR2(4000) := '';
+  ins_employerName              VARCHAR2(4000) := '';
+  ins_seasonalIncomeInd         VARCHAR2(4000) := '';
+  ins_suiteNum                  VARCHAR2(4000) := '';
+  ins_incomeID                  VARCHAR2(4000) := '';
+  ins_startDate                 VARCHAR2(4000) := '';
+  ins_taxExemptAmount           VARCHAR2(4000) := '';
+    
+BEGIN
+  l_evidenceidarray := numbers_table_type(100); /* initialize */
+  l_evidenceidarray_tmp := numbers_table_type(100); /* initialize */
+  l_concernroleid := i_concernroleid;
+IF i_debug_print > 0 THEN dbms_output.put_line('START - params: i_concernroleid='||i_concernroleid||' i_debug_print='||i_debug_print||' i_add_header='||i_add_header||' i_output_format='||i_output_format); END IF;
+
+/* Find ALL cases this concernroleid is involved in - other concernroleids may be found */
+  SELECT DISTINCT CPR.PARTICIPANTROLEID, CH.CASEREFERENCE, CH.CASEID BULK COLLECT INTO l_participantarray, l_casereferencearray, l_caseidarray 
+    FROM CASEHEADER CH, CASEPARTICIPANTROLE CPR WHERE CH.CASEREFERENCE IN (SELECT DISTINCT CH.CASEREFERENCE FROM CASEHEADER CH, CASEPARTICIPANTROLE CPR 
+    WHERE CPR.PARTICIPANTROLEID = l_concernroleid AND CH.CASEID = CPR.CASEID AND CPR.TYPECODE IN ('PRI', 'MEM') AND CH.CASETYPECODE = 'CT5' /* Integrated Case */ AND CH.STATUSCODE = 'CS4'/* OPEN */) 
+          AND CPR.TYPECODE IN ('PRI', 'MEM') AND CH.CASEID = CPR.CASEID AND CH.CASETYPECODE = 'CT5' /* Integrated Case */ AND CH.STATUSCODE = 'CS4'/* OPEN */ ;  
+
+IF i_debug_print > 0 THEN dbms_output.put_line('l_casereferencearray.count='||l_casereferencearray.count); END IF;
+  CASE 
+     WHEN l_casereferencearray.count = 0 THEN 
+        o_response_code := 'NO_DATA_FOUND'; 
+        o_response_text := 'No IC found for input concernroleid: ' || l_concernroleid; 
+        l_IC := 'NO ICs';        
+     WHEN l_casereferencearray.count >= 1 THEN
+IF i_debug_print > 0 THEN dbms_output.put_line('l_concernroleid='||l_concernroleid); END IF;
+IF i_debug_print > 0 THEN
+  FOR i IN 1..l_casereferencearray.count
+  LOOP
+    dbms_output.put_line('l_casereferencearray('||i||')='||l_casereferencearray(i));
+    dbms_output.put_line('l_participantarray('||i||')='||l_participantarray(i));
+    dbms_output.put_line('l_caseidarray('||i||')='||l_caseidarray(i));
+  END LOOP;
+END IF;
+        FOR j IN 1..l_casereferencearray.count /* find caseid that matches input concernroleid and yields results */
+        LOOP
+IF i_debug_print > 0 THEN dbms_output.put_line('In loop l_concernroleid='||l_concernroleid||' l_participantarray(='||j||')='||l_participantarray(j)); END IF;
+          IF l_participantarray(j) <> l_concernroleid THEN 
+            CONTINUE;
+          ELSE 
+            IF o_response_text IS NULL THEN 
+              o_response_text := l_casereferencearray(j);
+            ELSE
+              o_response_text := o_response_text || ', ' || l_casereferencearray(j);
+            END IF;
+            l_caseid := l_caseidarray(j);
+            l_IC := o_response_text;
+          END IF;
+IF i_debug_print > 0 THEN dbms_output.put_line('l_IC='||l_IC||' l_caseid='||l_caseid||' l_concernroleid='||l_concernroleid); END IF;
+
+          SELECT ED.SUCCESSIONID, ED.STATUSCODE, ED.RECEIVEDDATE, ED.CORRECTIONSETID, TO_DATE(TO_CHAR(EFFECTIVEFROM, 'YYYYMMDD'), 'YYYYMMDD'), RELATEDID, DENSE_RANK() OVER (PARTITION BY ED.SUCCESSIONID 
+            ORDER BY ED.SUCCESSIONID, NVL(ED.EFFECTIVEFROM,TO_DATE('00010101', 'YYYYMMDD')) DESC) Succession_Rank 
+            BULK COLLECT INTO l_successionidarray, l_statuscodearray, l_receiveddatearray, l_correctionsetidarray, l_effectivefromarray, l_evidenceidarray, l_rankarray
+            FROM EVIDENCEDESCRIPTOR ED WHERE ED.PARTICIPANTID = l_concernroleid and ED.CASEID = l_caseid and ED.EVIDENCETYPE IN ('DET0026018' /* Insurance */) AND ED.STATUSCODE = 'EDS1';
+
+IF i_debug_print > 0 THEN dbms_output.put_line('DEBUGEVIDENCEDESCRIPTOR1: l_evidenceidarray.count= '||l_evidenceidarray.count); END IF;
+          FOR i IN 1..l_evidenceidarray.count
+          LOOP
+IF i_debug_print > 0 THEN dbms_output.put_line('l_rankarray('||i||')='||l_rankarray(i)); END IF;
+IF i_debug_print > 0 THEN dbms_output.put_line('l_successionidarray('||i||')='||l_successionidarray(i)); END IF;
+IF i_debug_print > 0 THEN dbms_output.put_line('l_effectivefromarray('||i||')='||l_effectivefromarray(i)); END IF;
+IF i_debug_print > 0 THEN dbms_output.put_line('l_evidenceidarray('||i||')='||l_evidenceidarray(i)); END IF;
+        /* Search for DET0026030 (Income data) using the evidenceid */
+            BEGIN SELECT VALUE INTO l_coverageTypeCode FROM DYNAMICEVIDENCEDATAATTRIBUTE WHERE EVIDENCEID = l_evidenceidarray(i) AND NAME =  'coverageType';
+            EXCEPTION WHEN NO_DATA_FOUND 
+            THEN
+IF i_debug_print > 0 THEN dbms_output.put_line('SELECT VALUE INTO l_coverageTypeCode FROM DYNAMICEVIDENCEDATAATTRIBUTE failed'); END IF; 
+              l_coverageTypeCode := NULL;
+            END; --Do nothing            
+            IF l_coverageTypeCode IS NOT NULL 
+            THEN 
+IF i_debug_print > 0 THEN dbms_output.put_line('l_coverageTypeCode='||l_coverageTypeCode); END IF;
+              SELECT DESCRIPTION INTO l_coverageType FROM CODETABLEITEM WHERE CODE = l_coverageTypeCode AND TABLENAME IN ('HCRBenefitType', 'HCBenefitType', 'SourceIDCode', 'ProductName', 'HCInsuranceCoverageType');
+IF i_debug_print > 0 THEN dbms_output.put_line('l_coverageTypeCode/l_coverageType='||l_coverageTypeCode||'/'||l_coverageType); END IF;
+                BEGIN SELECT TO_CHAR(TO_DATE(VALUE, 'YYYYMMDD'), 'YYYYMMDD') INTO ins_startDate FROM DYNAMICEVIDENCEDATAATTRIBUTE WHERE EVIDENCEID = l_evidenceidarray(i) AND NAME =  'coverageStartDate';
+            EXCEPTION WHEN NO_DATA_FOUND THEN null; END; --Do nothing
+IF i_debug_print > 0 AND l_effectivefromarray(i) IS NOT NULL THEN dbms_output.put_line('ins_startDate0/l_effectivefromarray(i)='||TO_CHAR(TO_DATE(ins_startDate, 'YYYYMMDD'), 'YYYYMMDD')||'/'||TO_CHAR(TO_DATE(l_effectivefromarray(i), 'YYYYMMDD'), 'YYYYMMDD')); END IF;
+              IF (l_effectivefromarray(i) IS NOT NULL AND l_effectivefromarray(i) <> TO_DATE('00010101', 'YYYYMMDD')) THEN ins_startDate := TO_CHAR(l_effectivefromarray(i), 'YYYYMMDD'); END IF; /* 20170920, George Gluck, Fix to use sucessionid rank properly */
+IF i_debug_print > 0 THEN dbms_output.put_line('ins_startDate1='||TO_CHAR(TO_DATE(ins_startDate, 'YYYYMMDD'), 'YYYYMMDD')); END IF;
+IF i_debug_print > 0 THEN dbms_output.put_line('TO_CHAR(TO_DATE(ins_startDate) - 1)='||TO_CHAR(TO_DATE(ins_startDate, 'YYYYMMDD') - 1, 'YYYYMMDD')); END IF;
+             BEGIN SELECT VALUE INTO ins_endDate FROM DYNAMICEVIDENCEDATAATTRIBUTE WHERE EVIDENCEID = l_evidenceidarray(i) AND NAME =  'coverageEndDate';
+              EXCEPTION WHEN NO_DATA_FOUND THEN null; END; --Do nothing
+              IF l_rankarray(i) > 1 THEN ins_endDate := nextEndDate; END IF; /* 20170920, George Gluck, Fix to use sucessionid rank properly */
+              nextEndDate :=TO_CHAR(TO_DATE(ins_startDate, 'YYYYMMDD') - 1, 'YYYYMMDD'); /* 20170920, George Gluck, Fix to use sucessionid rank properly */
+IF i_debug_print > 0 THEN dbms_output.put_line('l_rankarray('||i||')/ins_endDate/nextEndDate='||l_rankarray(i)||'/'||ins_endDate||'/'||nextEndDate); END IF;
+              IF i_output_format = 1 THEN /* XML */
+                o_user_details_CLOB :=  o_user_details_CLOB || 
+                              '<benefit>' ||
+                              '<participantEnrolled>Yes</participantEnrolled>'||
+                              '<insuranceTypeCode>'||l_coverageTypeCode||'</insuranceTypeCode>'||
+                              '<type>'||l_coverageType||'</type>'||
+                              '<start_date>'||ins_startDate||'</start_date>'||
+                              '<end_date>'||ins_endDate||'</end_date>' ||
+                              '</benefit>';
+              ELSE /* pipe-delimited */
+                IF i > 1 THEN o_user_details_CLOB := o_user_details_CLOB || crlf; END IF; /* start record on a new line */
+                  o_user_details_CLOB :=  o_user_details_CLOB ||
+                              l_IC||'|'||
+                              i_concernroleid||'|'||
+                              l_caseid||'|'||
+                              'Yes'||
+                              l_coverageTypeCode||'|'||
+                              l_coverageType||'|'||
+                              ins_startDate||'|'||
+                              ins_endDate||'|'
+                              ;
+              END IF; /*  i_output_format = 1 */
+            ELSE /* No Insurance; Check if Elligible for insurance */
+              IF i_output_format = 1 THEN /* XML */
+                o_user_details_CLOB :=  o_user_details_CLOB ||
+                              '<participantEnrolled>No</participantEnrolled>'||
+                              '<insuranceTypeCode></insuranceTypeCode>'||
+                              '<insuranceType></insuranceType>'||
+                              '<start_date>'||ins_startDate||'</start_date>'||
+                              '<end_date>'||ins_endDate||'</end_date>';
+IF i_debug_print > 0 THEN dbms_output.put_line('o_user_details_CLOB='||o_user_details_CLOB); END IF;              
+              ELSE /* pipe-delimited */
+                IF i > 1 THEN o_user_details_CLOB := o_user_details_CLOB || crlf; END IF; /* start record on a new line */
+                  o_user_details_CLOB :=  o_user_details_CLOB ||
+                              l_IC||'|'||
+                              i_concernroleid||'|'||
+                              l_caseid||'|'||
+                              'No'||
+                              '|'||
+                              '|'||
+                              '|'
+                              ;
+              END IF; /*  i_output_format = 1 */
+IF i_debug_print > 0 THEN dbms_output.put_line('o_user_details_CLOB='||o_user_details_CLOB); END IF;              
+            END IF; /* l_coverageTypeCode IS NOT NULL */
+          END LOOP; /* FOR i IN 1..l_evidenceidarray.count */
+IF i_debug_print > 0 THEN dbms_output.put_line('j='||j); END IF;              
+        END LOOP; /* FOR j IN 1..l_casereferencearray.count  */
+     ELSE o_response_code := 'ERROR'; o_response_text := 'Error : ' || sqlerrm; RETURN;
+  END CASE;
+  IF INSTR(o_user_details_CLOB, '<participantEnrolled>Yes') > 0 /* participant has insurance */
+  THEN
+    o_response_code := 'DATA_FOUND'; 
+    o_response_text := 'Insurance data found for input concernroleid and generated caseid: ' || i_concernroleid || ' ' || l_caseid;
+    o_user_details_CLOB :=  '<benefits>' || o_user_details_CLOB || '</benefits>';
+    GOTO FINISH;
+  END IF;
+
+/* participant has no insurance; check if elligible for insurance - Assuming YES for now */  
+IF i_debug_print > 0 THEN dbms_output.put_line('No Insurance'); END IF;              
+l_participant_eligible := 'Yes'; /* assume yes */
+BEGIN 
+WITH Evidences AS
+(SELECT DistincT
+    CH.CASEREFERENCE AS IC,
+    CH.CONCERNROLEID AS Concern_Role_Id,
+    ED.PARTICIPANTID AS Participant_Id,
+    ED.RELATEDID AS Evidence_ID,  
+    TO_CHAR(P.DATEOFBIRTH,'DD-MON-YYYY') AS Person_DOB,
+    AN.FIRSTFORENAME AS First_Name,
+    AN.SURNAME AS Surname,
+    ETD.LOGICALNAME AS Evidence_Type,
+    ES.DESCRIPTION AS Evidence_Status,
+    TO_CHAR(ED.RECEIVEDDATE,'DD-MON-YYYY') AS Evidence_Received_Date,
+    ED.SUCCESSIONID AS Succession_Id,
+    DENSE_RANK() OVER (PARTITION BY ED.SUCCESSIONID ORDER BY ED.SUCCESSIONID, NVL(ED.EFFECTIVEFROM,TO_DATE('01-JAN-0001')) DESC) Succession_Rank,
+    TO_CHAR(ED.EFFECTIVEFROM,'DD-MON-YYYY') AS Effective_From_Date,
+    (SELECT TO_CHAR(TO_DATE(DED_SD.VALUE, 'YYYYMMDD'),'DD-MON-YYYY') FROM DYNAMICEVIDENCEDATAATTRIBUTE DED_SD WHERE DED_SD.NAME = 'startDate' AND DED_SD.EVIDENCEID = ED.RELATEDID) AS Start_Date,
+    (SELECT CASE WHEN DED_ED.VALUE IS NULL OR DED_ED.VALUE = '00010101' THEN NULL ELSE TO_CHAR(TO_DATE(DED_ED.VALUE,'YYYYMMDD'),'DD-MON-YYYY') END FROM DYNAMICEVIDENCEDATAATTRIBUTE DED_ED WHERE DED_ED.NAME = 'endDate' AND DED_ED.EVIDENCEID = ED.RELATEDID) AS End_Date
+  FROM 
+    CURAMUAT.CASEHEADER CH 
+  JOIN 
+    CURAMUAT.EVIDENCEDESCRIPTOR ED ON CH.CASEID = ED.CASEID
+    AND ED.STATUSCODE = 'EDS1'
+  JOIN
+    CURAMUAT.EVIDENCETYPEDEF ETD ON ED.EVIDENCETYPE = ETD.EVIDENCETYPECODE 
+    AND ETD.LOGICALNAME IN ('EmployerSponsoredCoverage')
+  JOIN
+    CURAMUAT.PERSON P ON  ED.PARTICIPANTID = P.CONCERNROLEID
+  JOIN 
+    CURAMUAT.ALTERNATENAME AN ON ED.PARTICIPANTID = AN.CONCERNROLEID 
+  JOIN
+    CODETABLEITEM ES ON ED.STATUSCODE = ES.CODE
+    AND ES.TABLENAME = 'EvidenceDescriptorStatus'
+  WHERE 
+    CH.CASETYPECODE = 'CT5' AND CH.CONCERNROLEID = l_concernroleid) 
+SELECT DISTINCT
+--  e_all.*, 
+  e_all.CONCERN_ROLE_ID, e_all.EVIDENCE_STATUS, e_all.EFFECTIVE_FROM_DATE, e_all.START_DATE, e_all.END_DATE, 
+--  NVL(e_all.Effective_From_Date, e_all.Start_Date) AS Evidence_Start_Date,
+--  TO_CHAR(CASE WHEN e_all.Succession_Rank = 1 THEN TO_DATE(e_all.End_Date,'DD-MON-YYYY') ELSE TO_DATE(e_next.Effective_From_Date,'DD-MON-YYYY') - 1 END, 'DD-MON-YYYY') AS Evidence_End_Date,
+  (SELECT C.DESCRIPTION FROM DYNAMICEVIDENCEDATAATTRIBUTE DED_A JOIN CODETABLEITEM C ON DED_A.VALUE = C.CODE AND C.TABLENAME = 'HCESCoverageStatus' 
+    WHERE DED_A.NAME = 'coverageStatus' AND DED_A.EVIDENCEID = e_all.Evidence_Id) AS Coverage_Status,
+  (SELECT C.DESCRIPTION FROM DYNAMICEVIDENCEDATAATTRIBUTE DED_A JOIN CODETABLEITEM C ON DED_A.VALUE = C.CODE AND C.TABLENAME = 'YesNo' 
+    WHERE DED_A.NAME = 'isMinimumValueMet' AND DED_A.EVIDENCEID = e_all.Evidence_Id) AS Is_Minimum_Value_Met,
+  (SELECT C.DESCRIPTION FROM DYNAMICEVIDENCEDATAATTRIBUTE DED_A JOIN CODETABLEITEM C ON DED_A.VALUE = C.CODE AND C.TABLENAME = 'YesNo' 
+    WHERE DED_A.NAME = 'isEmployeeInAWaitingPeriod' AND DED_A.EVIDENCEID = e_all.Evidence_Id) AS Is_Emp_In_Waiting_Period,
+  (SELECT DED_A.VALUE FROM DYNAMICEVIDENCEDATAATTRIBUTE DED_A WHERE DED_A.NAME = 'employeeContribution' AND DED_A.EVIDENCEID = e_all.Evidence_Id) AS Employee_Contribution,
+  (SELECT DED_A.VALUE FROM DYNAMICEVIDENCEDATAATTRIBUTE DED_A WHERE DED_A.NAME = 'planName' AND DED_A.EVIDENCEID = e_all.Evidence_Id) AS planName,
+--  (SELECT DED_A.VALUE FROM DYNAMICEVIDENCEDATAATTRIBUTE DED_A WHERE DED_A.NAME = 'lowestCostPlanName' AND DED_A.EVIDENCEID = e_all.Evidence_Id) AS lowestCostPlanName,
+  (SELECT C.DESCRIPTION FROM DYNAMICEVIDENCEDATAATTRIBUTE DED_A JOIN CODETABLEITEM C ON DED_A.VALUE = C.CODE AND C.TABLENAME = 'FrequencyCode' 
+    WHERE DED_A.NAME = 'contributionFrequency' AND DED_A.EVIDENCEID = e_all.Evidence_Id) AS Contribution_Frequency,
+  (SELECT REGEXP_REPLACE(DED_E.VALUE, '[[:space:]]', '' ) FROM DYNAMICEVIDENCEDATAATTRIBUTE DED_E WHERE DED_E.NAME = 'employerID' AND DED_E.EVIDENCEID = e_all.Evidence_Id) AS Employer_ID,
+--  (SELECT DED_E.VALUE FROM DYNAMICEVIDENCEDATAATTRIBUTE DED_E WHERE DED_E.NAME = 'employmentType' AND DED_E.EVIDENCEID = e_all.Evidence_Id) AS employmentType,
+  (SELECT DED_EN.VALUE FROM DYNAMICEVIDENCEDATAATTRIBUTE DED_EN WHERE DED_EN.NAME = 'employerName' AND DED_EN.EVIDENCEID = e_all.Evidence_Id) AS Employer_Name
+--  (SELECT DED_ES1.VALUE FROM DYNAMICEVIDENCEDATAATTRIBUTE DED_ES1 WHERE DED_ES1.NAME = 'employerStreet1' AND DED_ES1.EVIDENCEID = e_all.Evidence_Id) AS Employer_Street_1,
+--  (SELECT DED_ES2.VALUE FROM DYNAMICEVIDENCEDATAATTRIBUTE DED_ES2 WHERE DED_ES2.NAME = 'employerStreet2' AND DED_ES2.EVIDENCEID = e_all.Evidence_Id) AS Employer_Street_2, 
+--  (SELECT DED_ESN.VALUE FROM DYNAMICEVIDENCEDATAATTRIBUTE DED_ESN WHERE DED_ESN.NAME = 'employerSuiteNum' AND DED_ESN.EVIDENCEID = e_all.Evidence_Id) AS Employer_Suite_Number, 
+--  (SELECT DED_EC.VALUE FROM DYNAMICEVIDENCEDATAATTRIBUTE DED_EC WHERE DED_EC.NAME = 'employerCity' AND DED_EC.EVIDENCEID = e_all.Evidence_Id) AS Employer_City, 
+--  (SELECT DED_EC.VALUE FROM DYNAMICEVIDENCEDATAATTRIBUTE DED_EC WHERE DED_EC.NAME = 'employerCounty' AND DED_EC.EVIDENCEID = e_all.Evidence_Id) AS Employer_County, 
+--  (SELECT DED_ES.VALUE FROM DYNAMICEVIDENCEDATAATTRIBUTE DED_ES WHERE DED_ES.NAME = 'employerState' AND DED_ES.EVIDENCEID = e_all.Evidence_Id) AS Employer_State,
+--  (SELECT DED_EZ.VALUE FROM DYNAMICEVIDENCEDATAATTRIBUTE DED_EZ WHERE DED_EZ.NAME = 'employerZipCode' AND DED_EZ.EVIDENCEID = e_all.Evidence_Id) AS Employer_Zip_Code,
+--  (SELECT DED_C.VALUE FROM DYNAMICEVIDENCEDATAATTRIBUTE DED_C WHERE DED_C.NAME = 'comments' AND DED_C.EVIDENCEID = e_all.Evidence_Id) AS Comments
+INTO l_CONCERN_ROLE_ID, l_EVIDENCE_STATUS,l_EFFECTIVE_FROM_DATE, l_START_DATE, l_END_DATE, l_Coverage_Status, l_Is_Minimum_Value_Met, l_Is_Emp_In_Waiting_Period, l_Employee_Contribution, l_planName, l_Contribution_Frequency,
+    l_Employer_ID, l_Employer_Name
+FROM
+  Evidences e_all
+LEFT OUTER JOIN
+  Evidences e_next ON e_all.Succession_Id = e_next.Succession_Id
+  AND e_all.Succession_Rank - 1 = e_next.Succession_Rank
+--ORDER BY
+  --e_all.IC,
+  --e_all.Succession_Id,
+  --e_all.Succession_Rank DESC
+;  
+EXCEPTION WHEN NO_DATA_FOUND THEN l_participant_eligible := 'No'; END; --Do nothing
+IF i_debug_print > 0 THEN dbms_output.put_line('l_CONCERN_ROLE_ID, l_EVIDENCE_STATUS,l_EFFECTIVE_FROM_DATE, l_START_DATE, l_END_DATE, l_Coverage_Status, l_Is_Minimum_Value_Met, l_Is_Emp_In_Waiting_Period, l_Employee_Contribution, l_planName, l_Contribution_Frequency,
+l_Employer_ID, l_Employer_Name, l_planExists='||l_CONCERN_ROLE_ID||'/'||l_EVIDENCE_STATUS||'/'||l_EFFECTIVE_FROM_DATE||'/'||l_START_DATE||'/'||l_END_DATE||'/'||l_Coverage_Status||'/'||l_Is_Minimum_Value_Met||'/'||l_Is_Emp_In_Waiting_Period||'/'||l_Employee_Contribution||'/'||l_planName||'/'||l_Contribution_Frequency||'/'||l_Employer_ID||'/'||l_Employer_Name||'/'||l_planExists); END IF;
+        IF l_planName IS NOT NULL AND l_planName <> '' 
+        THEN
+            l_planExists := 'Yes';
+        ELSE
+            l_planExists := 'No';
+        END IF;
+        l_planCoverage := 'Employee Only'; /* Assumed, since data is not in Curam */
+        IF i_output_format = 1 THEN /* XML */
+          o_user_details_CLOB :=  o_user_details_CLOB ||
+            '<isPersonEligible>'||
+            '<participantEligible>'||l_participant_eligible||'</participantEligible>'||
+            '<start_date>' || l_START_DATE || '</start_date>'||
+            '<end_date>' || l_END_DATE || '</end_date>'||
+            '<employerName>'||l_Employer_Name||'</employerName>'||
+            '<employerID>'||l_Employer_ID||'</employerID>'||
+            '<planExists>'||l_planExists||'</planExists>'||
+            '<planCoverage>'||l_planCoverage||'</planCoverage>'||
+            '<personCost>'||l_Employee_Contribution||'</personCost>'||
+            '<costFrequency>'||l_Contribution_Frequency||'</costFrequency>'||
+            '<planMEC>'||l_Is_Minimum_Value_Met||'</planMEC>'||
+            '</isPersonEligible>';
+        ELSE /* pipe-delimited */
+          IF i > 1 THEN o_user_details_CLOB := o_user_details_CLOB || crlf; END IF; /* start record on a new line */
+            o_user_details_CLOB :=  o_user_details_CLOB ||
+                        l_IC||'|'||
+                        i_concernroleid||'|'||
+                        l_caseid||'|'||
+                        'Yes'||
+                        l_START_DATE||'|'||
+                        l_END_DATE||'|'||
+                        l_Employer_Name||'|'||
+                        l_Employer_ID||'|'||
+                        l_planExists||'|'||
+                        l_planCoverage||'|'||
+                        l_Employee_Contribution||'|'||
+                        l_Contribution_Frequency||'|'||
+                        l_planMEC||'|'
+                        ;
+        END IF; /*  i_output_format = 1 */
+
+IF i_debug_print > 0 THEN dbms_output.put_line('o_user_details_CLOB='||o_user_details_CLOB); END IF;
+  IF INSTR(o_user_details_CLOB,'<participantEnrolled>Yes<') = 0 THEN
+    IF INSTR(o_user_details_CLOB,'<participantEligible>No') > 0
+    THEN
+      o_response_code := 'NO_DATA_FOUND'; 
+      o_response_text := 'No Insurance or Eligibility data found for input concernroleid and generated caseid: ' || i_concernroleid || ' ' || l_caseid;    
+    ELSE
+      o_response_code := 'DATA_FOUND'; 
+      o_response_text := 'No Insurance data found, but Eligibility data found for input concernroleid and generated caseid: ' || i_concernroleid || ' ' || l_caseid;    
+    END IF;
+  ELSE
+    o_response_code := 'DATA_FOUND'; 
+    o_response_text := 'Insurance data found for input concernroleid and generated caseid: ' || i_concernroleid || ' ' || l_caseid;
+  END IF;
+--  END IF; /* participant has insurance */
+<<FINISH>>
+IF i_debug_print > 0 THEN dbms_output.put_line('o_user_details_CLOB1='||o_user_details_CLOB); END IF;
+  o_user_details_CLOB := REPLACE(o_user_details_CLOB, '''', '&apos;');
+IF i_debug_print > 0 THEN dbms_output.put_line('o_user_details_CLOB2='||o_user_details_CLOB); END IF;
+  o_user_details_CLOB := REPLACE(o_user_details_CLOB, '&', '&amp;');
+IF i_debug_print > 0 THEN dbms_output.put_line('o_user_details_CLOB3='||o_user_details_CLOB); END IF;
+  IF i_output_format = 1 THEN
+    IF i_add_header = 1 THEN o_user_details_CLOB := '<?xml version="1.0" standalone="yes"?><participant_insured_or_eligible><participant_insured>' || o_user_details_CLOB || '</participant_insured></participant_insured_or_eligible>'; END IF;
+  END IF;
+  RETURN;
+EXCEPTION
+    WHEN NO_DATA_FOUND THEN
+IF i_debug_print > 0 THEN dbms_output.put_line('Error Code:'||SQLCODE||chr(10)||'Error Text:'||SQLERRM); END IF;
+END; /* Execution */
+END; /* DECLARE */

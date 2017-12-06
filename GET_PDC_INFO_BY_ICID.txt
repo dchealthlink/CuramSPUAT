@@ -1,0 +1,495 @@
+create or replace 
+PROCEDURE GET_PDC_INFO_BY_ICID (  
+   i_caseref                  IN     /* schemaname */ caseheader.casereference%TYPE,
+   o_integratedcase           OUT CLOB--,
+--   i_is_zipped                IN INTEGER,
+--   debug_print                IN INTEGER DEFAULT 0, -- level of debug printing
+--   i_CaseDeterminationStatus  IN STRING DEFAULT '%', -- Current or Superseded ('*' includes NULL)
+--   i_CaseDeterminationType    IN STRING DEFAULT '%', -- Manual Eligibility Check, Snapshot, or Case Assessment
+--   i_CaseStatus               IN STRING DEFAULT '%', -- Active, ..., Suspended, ..., Closed, ..., Open, ..., Submitted, ..., Approved, Pending closure, ...
+--   i_CaseAssessmentDetReason  IN STRING DEFAULT '%', -- Case Activation, ..., Evidence Change, ..., Rate Change, ..., Rules Change, ..., Product Configuration Change, ..., Case Reassessment, Manual Reassessment, ...
+--   i_EXPECTEDDATE             IN INTEGER,
+--   i_STARTDATE                IN INTEGER
+   )
+IS
+BEGIN
+DECLARE
+ t_CaseDeterminationStatus VARCHAR2(80);
+ t_CaseDeterminationType   VARCHAR2(80);
+ t_CaseStatus              VARCHAR2(80);
+ t_CaseAssessmentDetReason VARCHAR2(80); 
+ t_caseref              VARCHAR2(20);
+ query_str              VARCHAR2(5000);
+ l_CONCERNROLENAME      VARCHAR2(131);
+ l_n_rowcount           pls_integer;
+ l_compressed_blob      BLOB;
+ l_uncompressed_blob    BLOB;
+ l_blob_tmp             VARCHAR2(32767);
+ l_buffer               RAW(32767);
+ l_blob_char            VARCHAR2(32767);
+ l_blob_string          VARCHAR2(32767);
+ l_pos                  NUMBER := 1;
+ l_blob_len             NUMBER;
+ l_amount               BINARY_INTEGER := 16383; -- Half the maximum buffer size, since converting from single byte to 2- byte HEX
+ number_of_participants INTEGER := 0;
+ crlf                   VARCHAR2(2) := chr(13)||chr(10);
+ tempString             STRING(32767);
+ sCount                 INTEGER := -1;
+ staticString           STRING(32767);
+ StringStart            INTEGER;
+ PDC_Type               STRING(60);
+ membersString          STRING(50);
+ numberOfBLOBs          INTEGER;
+ bufferNumber           INTEGER;
+ crossBufferStatus      STRING(30);
+ numberOfParticipants	  Number;
+ finalParticipantCount	Number;
+ smallTempStringSize	  Number;
+ type         			    PDC_participant_list_t is TABLE of NUMBER(19);
+ PDC_participant_list   PDC_participant_list_t := PDC_participant_list_t(); /* Assume at most 70 participants */
+ i                      INTEGER;
+ localDistance          INTEGER;
+ PDCsFound              BOOLEAN;
+ pdc_case_reference     STRING(10);
+ PDC_buffer             VARCHAR2(32767);
+ c_getBLOB              pls_integer;
+ pdc_Effective_Date     DATE;
+ pdc_Start_Date         DATE;
+ pdc_Expected_End_Date  DATE;
+ concernRoleID             NUMBER;
+ l_caseParticipantRoleID   NUMBER;
+ type blobsarray IS VARRAY(25) OF BLOB;
+ l_compressed_blob_array   blobsarray;
+ i_is_zipped               INTEGER;
+ debug_print               INTEGER;
+ i_CaseDeterminationStatus STRING(100);
+ i_CaseDeterminationType   STRING(100);
+ i_CaseStatus              STRING(100);
+ i_CaseAssessmentDetReason STRING(100);
+ i_EXPECTEDDATE            INTEGER;
+ i_STARTDATE               INTEGER;
+ ExpandXML                 BOOLEAN DEFAULT FALSE; /* TRUE: Expand XML for readability */
+ type tabsarray IS VARRAY(5) OF VARCHAR2(10);
+ tabs                       tabsarray;
+ 
+ 
+/**************************************************************************************************************************************************************/
+/****************************************************** Parameters to use to restrict the BLOBs selected: *****************************************************/
+/******* '''%''' parameter implies all values of that column, including NULL. '''<value1>''', ..., '''<valueN>''' implies a list of particular values. ********/
+/*******           If the first value is '''NULL''', as in '''NULL''', '''CS1''', then records with NULL values for that column will be included.      ********/ 
+/**************************************************************************************************************************************************************/
+/* 1. TABLENAME	              CODE	DESCRIPTION
+      ---------               ----- -----------
+      CaseDeterminationStatus	CDAS1	Current
+      CaseDeterminationStatus	CDAS2	Superseded
+      NOTE: CaseDeterminationStatus IS NULL only if CaseDeterminationType (below) is not 'CDT3' - Case Assesment.
+      
+   2.   TABLENAME	          CODE	DESCRIPTION
+      --------------------- ----  -----------------------
+      CaseDeterminationType	CDT1	Manual Eligibility Check
+      CaseDeterminationType	CDT2	Snapshot
+      CaseDeterminationType	CDT3	Case Assessment
+      
+   3.   TABLENAME	          CODE	      DESCRIPTION
+      --------------------- ----    -----------------------
+        CaseStatus	        CS1	      Active
+        CaseStatus	        CS10	    Delayed Processing Pending
+        CaseStatus	        CS10000	  Inactive
+        CaseStatus	        CS10001	  Completed
+        CaseStatus	        CS10002	  In Progress
+        CaseStatus	        CS11	    Cancelled
+        CaseStatus	        CS12	    Appeal Submitted
+        CaseStatus	        CS13	    Rejected
+        CaseStatus	        CS14	    ******
+        CaseStatus	        CS15	    In Progress
+        CaseStatus	        CS16	    Completed
+        CaseStatus	        CS2	      Suspended
+        CaseStatus	        CS27000	  AWAITINGRESOLUTION
+        CaseStatus	        CS27001	  CREATED
+        CaseStatus	        CS27002	  Authorization In Progress
+        CaseStatus	        CS27003	  Authorization Failed
+        CaseStatus	        CS3	      Closed
+        CaseStatus	        CS3000  	Application
+        CaseStatus	        CS4	      Open
+        CaseStatus	        CS5	      Submitted
+        CaseStatus	        CS55	    Plan Submitted
+        CaseStatus	        CS6	      Approved
+        CaseStatus	        CS7	      Pending closure
+        CaseStatus	        CS8	      Planned
+        CaseStatus	        CS9     	Cancelled Planned
+        
+   4.   TABLENAME	          CODE	      DESCRIPTION
+      --------------------- ----    -----------------------
+    CaseAssessmentDetReason	CADR1	    Case Activation
+    CaseAssessmentDetReason	CADR19001	Sanction
+    CaseAssessmentDetReason	CADR2	    Evidence Change
+    CaseAssessmentDetReason	CADR2001	Case Closure
+    CaseAssessmentDetReason	CADR3	    Rate Change
+    CaseAssessmentDetReason	CADR4	    Rules Change
+    CaseAssessmentDetReason	CADR5	    Product Configuration Change
+    CaseAssessmentDetReason	CADR6   	Case Reassessment
+    CaseAssessmentDetReason	CADR7	    Manual Reassessment
+    CaseAssessmentDetReason	CADR8	    Change in case start/end dates
+    CaseAssessmentDetReason	CADR9	    System Configuration Change      
+
+/**************************************************************************************************************************************************************/
+ BEGIN
+  i_is_zipped := 1;
+  debug_print := 0;
+  /* 20170810, George Gluck, added option for human readability (start) */
+  ExpandXML := FALSE; /* For readability of XML */
+  tabs := tabsarray('','','','','');
+  IF ExpandXML THEN
+    tabs(1) := chr(11) || chr(11); -- initialize tabs array (2 tabs)
+    FOR i IN 2..5
+    LOOP
+      tabs(i) := tabs(i - 1) || tabs(1);
+    END LOOP;
+  ELSE crlf := '';
+  END IF;
+  /* 20170810, George Gluck, added option for human readability (end) */
+  numberOfBLOBs := 0;
+  finalParticipantCount := 0;
+  SELECT CDD.CREOLESNAPSHOTDATA BULK COLLECT INTO l_compressed_blob_array FROM CREOLECASEDETERMINATIONDATA CDD, CREOLECASEDETERMINATION CD
+                WHERE CD.TYPE IN ('CDT2') AND CDD.CREOLECASEDETERMINATIONDATAID = CD.DETERMINATIONRESULTDATAID AND   CDD.CREOLECASEDETERMINATIONDATAID IN 
+            (
+            SELECT CD1.RULEOBJECTSNAPSHOTDATAID FROM CREOLECASEDETERMINATION CD1 WHERE CD1.TYPE IN ('CDT2') AND CD1.CASEID IN 
+            (SELECT CH1.CASEID FROM CASEHEADER CH1 WHERE    CH1.INTEGRATEDCASEID IN (SELECT CH2.CASEID FROM CASEHEADER CH2 WHERE CH2.STATUSCODE <> 'CS3' AND CH2.CASEREFERENCE = i_caseref))
+        UNION 
+            SELECT CD1.DETERMINATIONRESULTDATAID FROM CREOLECASEDETERMINATION CD1 WHERE CD1.TYPE IN ('CDT2') AND CD1.CASEID IN 
+            (SELECT CH1.CASEID FROM CASEHEADER CH1 WHERE    CH1.INTEGRATEDCASEID IN (SELECT CH2.CASEID FROM CASEHEADER CH2 WHERE CH2.STATUSCODE <> 'CS3' AND CH2.CASEREFERENCE = i_caseref))
+            );
+  l_n_rowcount := l_compressed_blob_array.count;
+IF debug_print > 0 THEN dbms_output.put_line('l_n_rowcount='||l_n_rowcount); END IF;
+  IF l_n_rowcount = 0 THEN GOTO NoPDCs; END IF;
+  numberOfBLOBs := 0;
+  PDC_participant_list.extend(50);
+  pdc_case_reference := NULL;
+  PDCsFound := FALSE; /* Start XML output when changed to TRUE */
+  IF l_n_rowcount = 0 THEN GOTO NoPDCs; END IF;
+  LOOP /* for each BLOB there should be an active related PDC */
+    number_of_participants := 0;
+    PDC_TYPE := NULL;
+    finalParticipantCount := 0;
+    crossBufferStatus := 'Determination Not Found';
+    numberOfBLOBs := numberOfBLOBs + 1;
+    IF i_is_zipped = 0 THEN
+IF debug_print > 0 THEN dbms_output.put_line('Examinging BLOB number ' || numberOfBLOBs || ', which is zipped '); END IF;
+      l_uncompressed_blob := UTL_COMPRESS.lz_uncompress (l_compressed_blob_array(numberOfBLOBs));
+    ELSE
+IF debug_print > 0 THEN dbms_output.put_line('Examinging BLOB number ' || numberOfBLOBs || ', which is NOT zipped '); END IF;
+      l_uncompressed_blob := UTL_COMPRESS.lz_uncompress (l_compressed_blob_array(numberOfBLOBs));
+    END IF;
+/*******************************************************************************************************************************************************************************/
+IF debug_print > 0 THEN dbms_output.put_line('PDCsFound='||sys.diutil.bool_to_int(PDCsFound)); END IF;
+    l_blob_len := LENGTH(l_uncompressed_blob);
+    bufferNumber := 0;
+    membersString := NULL;
+    l_pos := 1;
+<<process_BLOB_loop>>
+    WHILE l_pos <= l_blob_len
+    LOOP
+      bufferNumber := bufferNumber + 1;
+IF debug_print > 0 THEN dbms_output.put_line('For BLOB ' || numberOfBLOBs || ', buffer ' || bufferNumber || ' l_blob_len=:'||l_blob_len|| ' l_pos='||l_pos||' l_amount='||l_amount); END IF;
+      l_amount := 16383; -- Half the maximum buffer size, since converting from single byte to 2- byte HEX (reset to be sure to get entire next buffer)
+      DBMS_LOB.read(l_uncompressed_blob, l_amount, l_pos, l_buffer);    
+IF debug_print > 0 THEN dbms_output.put_line('After l_amount='||l_amount); END IF;
+      l_blob_char :=  RAWTOHEX(l_buffer);
+      l_blob_tmp := l_blob_char;
+IF debug_print > 0 THEN dbms_output.put_line('LEN(l_blob_tmp)='||length(l_blob_tmp)); END IF;
+IF debug_print > 0 THEN DBMS_OUTPUT.put_line(SUBSTR(l_blob_tmp, 1, 500) || crlf || '...' || crlf || SUBSTR(l_blob_tmp, -500, 500));  END IF;
+      l_blob_string := NULL;
+      BEGIN
+        while length(l_blob_tmp)>0
+        LOOP
+          l_blob_string:=l_blob_string||chr(to_number(substr(l_blob_tmp,0,2),'xx') using NCHAR_CS);
+          l_blob_tmp:=substr(l_blob_tmp,3);
+        END LOOP;
+      END;      
+      staticString := l_blob_string; /* Convert so REGEXP works */
+      tempString := staticString;
+        
+/*************** Check for three PDC types *******************/
+IF debug_print > 0 THEN DBMS_OUTPUT.put_line('0crossBufferStatus=' || crossBufferStatus || ' BLOB/bufferNumber=' || numberOfBLOBs || '/' || bufferNumber);  END IF;
+      IF INSTR(staticString, '<?xml version="1.0" encoding="UTF-8"?><Determination caseID=', 1, 1) = 0 AND 
+          (crossBufferStatus <> 'Determination Found' AND crossBufferStatus <> 'PDC Type Found' AND crossBufferStatus <> 'Members List Found') /* Data to search may be in a later buffer of this BLOB */
+      THEN
+IF debug_print > 1 THEN dbms_output.put_line('For BLOB # ' || numberOfBLOBs || ' buffer # ' || bufferNumber || ', ''Determination'' or PDC was not found in the buffer starting at position ' || l_pos); END IF;
+        GOTO end_process_BLOB_loop; 
+      END IF;/* Use Only 'Determination' BLOBS */
+      IF crossBufferStatus = 'Determination Not Found' 
+      THEN 
+        crossBufferStatus := 'Determination Found'; 
+      END IF;
+
+/* Check for the last determination in the BLOB */
+              
+IF debug_print > 1 THEN dbms_output.put_line('crossBufferStatus/PDC_Type/bufferNumber/membersString/staticString='||crossBufferStatus||'/'||PDC_TYPE||'/'||bufferNumber||'/'||membersString||':'||crlf||staticString); END IF;
+      IF membersString IS NULL /* Once per BLOB */
+      THEN
+        pdc_case_reference := SUBSTR(staticString, INSTR(staticString, '&lt;/caseReference') - 7, 7);
+IF debug_print > 0 THEN DBMS_OUTPUT.put_line('pdc_case_reference=' || pdc_case_reference);  END IF;
+        IF INSTR(staticString, '&lt;StreamlineMedicaidSummaryCategory', 1, 1) > 0
+        THEN
+--          membersString := '&lt;memberUnitConcernRoleIDList&gt'; /* concern_role_id */ /* 20170620, George Gluck removed, since it was including too many participants */
+          membersString := '&lt;benefitUnitMembersCaseParticipantRole&gt'; /* concern_role_id */ /* 20170620, George Gluck, reinstating since it was including too many participants */
+          localDistance := 4000; /* for benefitUnitMembersCaseParticipantRole */
+          StringStart :=  INSTR(staticString, '&lt;StreamlineMedicaidSummaryCategory', 1, 1);
+        ELSIF INSTR(staticString, '&lt;InsuranceAssistanceSummaryCategory', 1, 1) > 0
+        THEN
+          membersString := '&lt;participantRoleIDList&gt';
+          localDistance := 4000; /* for benefitUnitMembersCaseParticipantRole */
+          StringStart :=  INSTR(staticString, '&lt;InsuranceAssistanceSummaryCategory', 1, 1);
+        ELSIF INSTR(staticString, '&lt;UQHPSummaryCategory', 1, 1) > 0
+        THEN
+          membersString := '&lt;participantRoleIDList&gt'; /* Assume UQHP */ -- 20170501, George Gluck, Change '&lt;memberUnitConcernRoleIDList' to &lt;participantRoleIDList&gt
+          localDistance := 4000; /* Assume UQHP */
+          StringStart :=  INSTR(staticString, '&lt;UQHPSummaryCategory', 1, 1);
+        ELSE
+          GOTO end_process_BLOB_loop; /* get next BLOB */
+        END IF;
+      ELSE /* PDC_TYPE already found */
+IF debug_print > 0 THEN dbms_output.put_line('INSTR(staticString, &lt;' || PDC_TYPE || ')='||INSTR(staticString, '&lt;' || PDC_TYPE)); END IF;
+IF debug_print > 0 THEN dbms_output.put_line('tempString:' || crlf || SUBSTR(tempString, 1, localDistance)); END IF;
+        IF PDC_TYPE IS NOT NULL THEN staticString := tempString; END IF;
+IF debug_print > 0 THEN dbms_output.put_line('staticString:'||crlf||SUBSTR(staticString,1, localDistance)||crlf||'INSTR(staticString, &lt;' || PDC_TYPE || ')='||INSTR(staticString, '&lt;' || PDC_TYPE)); END IF;
+        IF ((INSTR(staticString, '&lt;' || PDC_TYPE) = 0) AND (crossBufferStatus <> 'PDC Type Found') )/* 20170410, George Gluck, added "AND crossBufferStatus <> 'PDC Type Found'" */
+        THEN
+IF debug_print > 0 THEN dbms_output.put_line('l_pos + l_amount/l_blob_len=' || TO_CHAR(l_pos + l_amount) || '/'|| l_blob_len); END IF;
+--          IF l_pos + l_amount > l_blob_len
+--          THEN
+            GOTO end_process_BLOB_loop; /* Get next buffer */
+--          END IF;
+        END IF;
+        IF INSTR(staticString, '&lt;' || PDC_TYPE) = 0 THEN
+          StringStart :=  INSTR(staticString, '&lt;' || PDC_TYPE, 1, 1);
+        ELSE 
+          StringStart := 1;
+        END IF;
+      END IF; /* membersString IS NULL - Once per BLOB */
+IF debug_print > 1 THEN dbms_output.put_line(crlf||'PDC_TYPE/StringStart/crossBufferStatus/membersString/staticString='||PDC_TYPE||'/'||StringStart||'/'||crossBufferStatus || '/' || membersString || crlf || staticString); END IF;
+/*************** Check for finding a PDC type *******************/
+      IF StringStart <> 0 OR crossBufferStatus <> 'Determination Not Found' 
+      THEN
+        IF StringStart <> 0 AND crossBufferStatus = 'Determination Found' 
+        THEN 
+          crossBufferStatus := 'PDC Type Found';
+        END IF;
+        tempString := SUBSTR(staticString, StringStart);
+        IF PDC_TYPE IS NULL THEN PDC_TYPE := SUBSTR(tempString, 5, INSTR(tempString, '&gt', 5, 1) - 5); END IF;
+IF debug_print > 0 THEN dbms_output.put_line(crlf||'bufferNumber=' || bufferNumber ||' INSTR(tempString, ''&gt'', 5, 1)=' || INSTR(tempString, '&gt', 5, 1)); END IF;
+IF debug_print > 0 THEN dbms_output.put_line(crlf||'SUBSTR(tempString, 5, INSTR(tempString, ''&gt'', 5, 1) - 5)=' || SUBSTR(tempString, 5, INSTR(tempString, '&gt', 5, 1) - 5)); END IF;
+IF debug_print > 1 THEN dbms_output.put_line(crlf||'PDC_TYPE/membersString=' || PDC_TYPE || '/' || membersString || '/initial tempString='|| crlf || tempString); END IF;
+<<continue_PDC_segment_search>>
+IF debug_print > 0 THEN dbms_output.put_line(crlf||'bufferNumber/localDistance=' || bufferNumber ||'/'||localDistance||'  SUBSTR(tempString, 1, localDistance)=' || crlf || SUBSTR(tempString, 1, localDistance)); END IF;
+IF debug_print > 0 THEN dbms_output.put_line(crlf||'membersString/LENGTH(tempString)=' || membersString || '/' || LENGTH(tempString) || ' BLOB/bufferNumber=' || numberOfBLOBs || '/' || bufferNumber); END IF;
+        IF INSTR(SUBSTR(tempString, 1, localDistance), membersString, 1, 1) = 0 /* Search for next PDC_TYPE */
+        THEN
+          IF localDistance >= LENGTH(tempString) THEN GOTO end_process_BLOB_loop; END IF;/* get next buffer */
+          tempString := SUBSTR(tempString, LENGTH('&lt;'||PDC_TYPE)); /* skip past this sement */
+IF debug_print > 0 THEN dbms_output.put_line(crlf||'INSTR(tempString, &lt;'||PDC_TYPE||')=' || INSTR(tempString, '&lt;'||PDC_TYPE)); END IF;
+          IF INSTR(tempString, '&lt;'||PDC_TYPE) = 0 THEN GOTO end_process_BLOB_loop; END IF;
+          tempString := SUBSTR(tempString, INSTR(tempString, '&lt;'||PDC_TYPE));
+          GOTO continue_PDC_segment_search;  
+        END IF;
+        tempString := SUBSTR(tempString, INSTR(SUBSTR(tempString, 1, localDistance), membersString, 1, 1)); /* search locally */
+IF debug_print > 0 THEN dbms_output.put_line(crlf||' tempString0='||SUBSTR(tempString, 1, localDistance)); END IF;
+IF debug_print > 1 THEN dbms_output.put_line(crlf||'membersString=' || membersString || ' crossBufferStatus=' || crossBufferStatus ||' PDC_TYPE=' || PDC_TYPE || crlf ||
+                                                    ' tempString0='||tempString); END IF;
+        IF INSTR(SUBSTR(tempString, 1, 90), '&lt;Item domain="SVR_INT64"&gt;') > 0 OR crossBufferStatus = 'Members List Found' /* participant must be "close" to PDC_TYPE */
+        THEN 
+          crossBufferStatus := 'Members List Found';
+          tempString := SUBSTR(tempString, INSTR(SUBSTR(tempString, 1, 100), '&lt;Item domain="SVR_INT64"&gt;') + 31); /* Find participant role on next line only */              
+IF debug_print > 0 THEN dbms_output.put_line(crlf||'membersString=' || membersString || ' tempString1='|| crlf || SUBSTR(tempString, 1, 300)); END IF;
+        ELSE
+          numberOfParticipants := 0; /* reset for this occurance of the same PDC; assume the final one is to be used */
+          crossBufferStatus := 'Determination Found'; /* Since no memebers found for this PDC */
+          IF INSTR(tempString, '&lt;'||PDC_TYPE) > 0
+          THEN
+            tempString := SUBSTR(tempString, INSTR(tempString, '&lt;'||PDC_TYPE));
+            GOTO continue_PDC_segment_search;
+          ELSE
+IF debug_print > 0 THEN dbms_output.put_line(crlf||'membersString(' || membersString || ') not found. Continue to next buffer'); END IF;
+            GOTO end_process_BLOB_loop;
+          END IF;
+        END IF;
+<<checkForParticipants>>
+        WHILE crossBufferStatus = 'Members List Found' /* Find all participants */
+        LOOP
+IF debug_print > 0 THEN dbms_output.put_line(crlf||'PDC_TYPE/number_of_participants='||PDC_TYPE||'/'||number_of_participants ||' INSTR(SUBSTR(tempString, 1, 100), ''&lt;Item domain="SVR_INT64"&gt;'')=' ||
+                                        INSTR(SUBSTR(tempString, 1, 100), '&lt;Item domain="SVR_INT64"&gt;') || ' tempString2:'|| crlf || SUBSTR(tempString, 1, 1000)); END IF;
+          number_of_participants := number_of_participants + 1;
+          finalParticipantCount := number_of_participants; /* save count of last found segment for this PDC Type */
+          IF PDC_TYPE <> 'StreamlineMedicaidSummaryCategory' THEN  /* 20170620, George Gluck, reinstating since it was including too many participants */
+            PDC_participant_list (number_of_participants) := SUBSTR(tempString, 1, INSTR(tempString, '&lt', 1) - 1);
+          ELSE /* for StreamlineMedicaidSummaryCategory, BLOB returns CASEPARTICIPANTROLEID */
+--IF debug_print > 0 THEN dbms_output.put_line(crlf||'TO_NUMBER(SUBSTR(tempString, 1, INSTR(tempString, ''&lt'', 1) - 1)='||SUBSTR(tempString, 1, INSTR(tempString, '&lt', 1) - 1)); END IF;
+            l_caseParticipantRoleID := TO_NUMBER(SUBSTR(tempString, 1, INSTR(tempString, '&lt', 1) - 1));
+--IF debug_print > 0 THEN dbms_output.put_line(crlf||'l_caseParticipantRoleID='||l_caseParticipantRoleID); END IF;
+            SELECT PARTICIPANTROLEID INTO concernRoleID FROM CASEPARTICIPANTROLE WHERE CASEPARTICIPANTROLEID = l_caseParticipantRoleID;
+--IF debug_print > 0 THEN dbms_output.put_line(crlf||'concernRoleID='||concernRoleID); END IF;
+            PDC_participant_list (number_of_participants) := concernRoleID;
+          END IF; /* 20170620, George Gluck, reinstating since it was including too many participants */
+IF debug_print > 0 THEN dbms_output.put_line(crlf||'PDC_participant_list('||number_of_participants ||')='||PDC_participant_list (number_of_participants)); END IF;
+          IF INSTR(SUBSTR(tempString, 1, 100), '&lt;Item domain="SVR_INT64"&gt;') = 0 /* no further participant ids found */
+          THEN
+            crossBufferStatus := 'PDC Type Found'; /* reset */
+IF debug_print > 0 THEN dbms_output.put_line(crlf||'crossBufferStatus reset to '||crossBufferStatus || ' PDC_TYPE='||PDC_TYPE||' finalParticipantCount='||finalParticipantCount); END IF;
+            number_of_participants := 0;
+IF debug_print > 1 THEN dbms_output.put_line(crlf||'tempString3.0='||tempString); END IF;
+IF debug_print > 0 THEN dbms_output.put_line(crlf||'''&lt;''||PDC_TYPE='||'&lt;'||PDC_TYPE); END IF;
+            IF INSTR(tempString, '&lt;'||PDC_TYPE) = 0 /* No other PDC data to be found in this buffer */
+            THEN
+              GOTO end_process_BLOB_loop;
+            ELSE
+              tempString := SUBSTR(tempString, INSTR(tempString, '&lt;'||PDC_TYPE)); /* search for another segment of PDC_TYPE */
+              smallTempStringSize := 50 + 100 * finalParticipantCount; /* dependent on maximum number of participants */
+IF debug_print > 1 THEN dbms_output.put_line(crlf||'LENGTH(tempString)=' || LENGTH(tempString) || ' smallTempStringSize=' || smallTempStringSize || ' Continuing search in remainder of BLOB/buffer '
+                                                  || numberOfBLOBs || '/' || bufferNumber || ':' ||crlf||tempString); END IF;
+
+/* If tempString is small, pertinent data may be in the next buffer, so read in the next BLOB and append it to tempString */
+
+              IF LENGTH(tempString) < smallTempStringSize
+              THEN
+                l_pos := l_pos + l_amount;                
+IF debug_print > 1 THEN dbms_output.put_line('For short string, l_blob_len=:'||l_blob_len|| ' l_pos='||l_pos||' l_amount='||l_amount); END IF;
+                l_amount := 16383; -- Half the maximum buffer size, since converting from single byte to 2- byte HEX (reset to be sure to get entire next buffer)
+                DBMS_LOB.read(l_uncompressed_blob, l_amount, l_pos, l_buffer);    
+IF debug_print > 0 THEN dbms_output.put_line('After2 l_amount='||l_amount); END IF;
+                l_blob_char :=  RAWTOHEX(l_buffer);
+                l_blob_tmp := l_blob_char;
+IF debug_print > 1 THEN dbms_output.put_line('LEN(l_blob_tmp)=:'||length(l_blob_tmp)); END IF;
+IF debug_print > 1 THEN DBMS_OUTPUT.put_line(SUBSTR(l_blob_tmp, 1, 500) || crlf || '...' || crlf || SUBSTR(l_blob_tmp, -500, 500));  END IF;
+                l_blob_string := NULL;
+                BEGIN
+                  while length(l_blob_tmp)>0
+                  LOOP
+                    l_blob_string:=l_blob_string||chr(to_number(substr(l_blob_tmp,0,2),'xx') using NCHAR_CS);
+                    l_blob_tmp:=substr(l_blob_tmp,3);
+                  END LOOP;
+                END;
+                bufferNumber := bufferNumber + 1;
+                tempString  := tempString || l_blob_string; 
+IF debug_print > 0 THEN dbms_output.put_line('For BLOB ' || numberOfBLOBs || ', buffer ' || bufferNumber || ' l_blob_len=:'||l_blob_len|| ' l_pos='||l_pos||' l_amount='||l_amount); END IF;
+IF debug_print > 0 THEN DBMS_OUTPUT.put_line('Appended buffer # ' || bufferNumber || ' to tempString:' || crlf || tempString);  END IF;
+              END IF;
+              GOTO continue_PDC_segment_search;
+            END IF;
+          ELSE
+            tempString := SUBSTR(tempString, INSTR(SUBSTR(tempString, 1, 100), '&lt;Item domain="SVR_INT64"&gt;') + 31);
+--            tempString := SUBSTR(tempString, INSTR(SUBSTR(tempString, 1, 100), '&lt;Item domain="SVR_UNBOUNDED_STRING"&gt;') + 42);
+IF debug_print > 0 THEN dbms_output.put_line('SVR_INT64 FOUND, crossBufferStatus=' || crossBufferStatus ||' INSTR(tempString, ''&lt;/Item&gt;&#13;'')='||INSTR(tempString, '&lt;/Item&gt;&#13;')
+                                                          ||' tempString:'||crlf|| SUBSTR(tempString, 1, localDistance)); END IF;
+            IF INSTR(tempString, '&lt;/Item&gt;&#13;') = 0 OR tempString IS NULL
+            THEN /* Participant name is in next buffer */
+              l_pos := l_pos + l_amount;                
+IF debug_print > 0 THEN dbms_output.put_line('For BLOB ' || numberOfBLOBs || ', buffer ' || bufferNumber || ' l_blob_len=:'||l_blob_len|| ' l_pos='||l_pos||' l_amount='||l_amount); END IF;
+IF debug_print > 1 THEN dbms_output.put_line('For end of buffer, l_blob_len=:'||l_blob_len|| ' l_pos='||l_pos||' l_amount='||l_amount); END IF;
+              l_amount := 16383; -- Half the maximum buffer size, since converting from single byte to 2- byte HEX (reset to be sure to get entire next buffer)
+              DBMS_LOB.read(l_uncompressed_blob, l_amount, l_pos, l_buffer);    
+IF debug_print > 0 THEN dbms_output.put_line('After3 l_amount='||l_amount); END IF;
+              l_amount := 16383; /* Reset to Max */
+              l_blob_char :=  RAWTOHEX(l_buffer);
+              l_blob_tmp := l_blob_char;
+IF debug_print > 1 THEN dbms_output.put_line('LEN(l_blob_tmp)=:'||length(l_blob_tmp)); END IF;
+IF debug_print > 1 THEN DBMS_OUTPUT.put_line(SUBSTR(l_blob_tmp, 1, 500) || crlf || '...' || crlf || SUBSTR(l_blob_tmp, -500, 500));  END IF;
+              l_blob_string := NULL;
+              BEGIN
+                while length(l_blob_tmp)>0
+                LOOP
+                  l_blob_string:=l_blob_string||chr(to_number(substr(l_blob_tmp,0,2),'xx') using NCHAR_CS);
+                  l_blob_tmp:=substr(l_blob_tmp,3);
+                END LOOP;
+              END;
+              bufferNumber := bufferNumber + 1;
+              tempString  := tempString || l_blob_string; 
+IF debug_print > 0 THEN dbms_output.put_line('For BLOB ' || numberOfBLOBs || ', buffer ' || bufferNumber || ' l_blob_len=:'||l_blob_len|| ' l_pos='||l_pos||' l_amount='||l_amount); END IF;
+IF debug_print > 0 THEN DBMS_OUTPUT.put_line('Appended buffer # ' || bufferNumber || ' to tempString:' || crlf || tempString);  END IF;
+              GOTO checkForParticipants;
+            END IF;
+--IF debug_print > 0 THEN dbms_output.put_line(crlf||'crossBufferStatus/tempString4='||crossBufferStatus || ':' || crlf || SUBSTR(tempString, 1, 500)); END IF;
+          END IF;
+        END LOOP; /* WHILE crossBufferStatus = 'Members List Found' */
+      END IF; /* StringStart <> 0 */
+<<end_process_BLOB_loop>>      
+      l_pos := l_pos + l_amount;
+IF debug_print > 0 THEN dbms_output.put_line('End of Loop: l_pos incremented/l_blob_len='||l_pos||'/'||l_blob_len); END IF;
+    END LOOP; /* WHILE l_pos <= l_blob_len */
+IF debug_print > 0 THEN dbms_output.put_line('finalParticipantCount='||finalParticipantCount); END IF;
+IF debug_print > 0 THEN dbms_output.put_line('PDCsFound0='||sys.diutil.bool_to_int(PDCsFound)); END IF;
+    crossBufferStatus := 'Determination Not Found'; /* 20170410, George Gluck, Reset and search for the next PDC */
+    PDC_Type := NULL;  /* 20170410, George Gluck, Reset and search for the next PDC */
+    IF finalParticipantCount = 0 
+    THEN 
+IF debug_print > 0 THEN dbms_output.put_line('No PDC found for BLOB # ' || numberOfBLOBs || ' of IC: '||i_caseref); END IF;
+    ELSE
+      IF NOT PDCsFound 
+      THEN
+IF debug_print > 0 THEN dbms_output.put_line('PDCsFound1='||sys.diutil.bool_to_int(PDCsFound)); END IF;
+        PDC_buffer := '<?xml version="1.0" standalone="yes"?><integrated_cases xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">'
+          ||crlf||tabs(1)||'<integratedcase>'||crlf||tabs(2)||'<integrated_case_reference>'||i_caseref|| '</integrated_case_reference>'||crlf||tabs(2)||'<product_delivery_cases>';
+--        dbms_output.put(PDC_buffer); /* 20170404, George Gluck, check for buffer > 32K characters */
+        PDCsFound := TRUE;
+      END IF;
+      /* 20170425, George Gluck, Obtain PDC-related data from the Curam DB */
+IF debug_print > 0 THEN dbms_output.put_line('pdc_case_reference='||pdc_case_reference); END IF;
+      SELECT EFFECTIVEDATE, STARTDATE, EXPECTEDENDDATE INTO pdc_Effective_Date, pdc_Start_Date, pdc_Expected_End_Date FROM CASEHEADER WHERE CASEREFERENCE = pdc_case_reference;
+IF debug_print > 0 THEN dbms_output.put_line('EFFECTIVEDATE/STARTDATE/EXPECTEDENDDATEs='||pdc_Effective_Date||'/'||pdc_Start_Date||'/'||pdc_Expected_End_Date); END IF;
+      If LENGTH(PDC_buffer) + LENGTH('<product_delivery_case><product_delivery_case_reference>'||pdc_case_reference||'</product_delivery_case_reference>') > 32767 THEN
+--        dbms_output.put(PDC_buffer || crlf); /* start new output buffer */
+        PDC_buffer := crlf||tabs(3)||'<product_delivery_case>'||crlf|| tabs(4)||'<product_delivery_case_reference>'||pdc_case_reference||'</product_delivery_case_reference>'||
+                      crlf||tabs(4)||'<pdc_effective_date>'||pdc_Effective_Date||'</pdc_effective_date>'||crlf||tabs(4)||'<startdate>'||pdc_Start_Date||'</startdate>'||
+                      crlf||tabs(4)||'<pdc_expected_end_date>'||pdc_Expected_End_Date||'</pdc_expected_end_date>';
+      ELSE
+                PDC_buffer := PDC_buffer||crlf||tabs(3)||'<product_delivery_case>'||crlf|| tabs(4)||'<product_delivery_case_reference>'||pdc_case_reference||'</product_delivery_case_reference>'||
+                                          crlf||tabs(4)||'<pdc_effective_date>'||pdc_Effective_Date||'</pdc_effective_date>'||crlf||tabs(4)||'<startdate>'||pdc_Start_Date||'</startdate>'||
+                                          crlf||tabs(4)||'<pdc_expected_end_date>'||pdc_Expected_End_Date||'</pdc_expected_end_date>';
+      END IF;
+IF debug_print > 0 THEN dbms_output.put_line('At o_integratedcase, finalParticipantCount='||finalParticipantCount); END IF;
+      for i in 1 .. finalParticipantCount
+      LOOP
+        SELECT CONCERNROLENAME INTO l_CONCERNROLENAME FROM CONCERNROLE WHERE CONCERNROLEID = PDC_participant_list (i);
+        If LENGTH(PDC_buffer) + LENGTH('<concern_role_id>'||PDC_participant_list (i)||'</concern_role_id>') > 32767 THEN
+--          dbms_output.put(PDC_buffer || crlf); /* start new output buffer */
+/* 20170622, George Gluck, added CONCRNROLENAME to output XML to make testing easier */
+          PDC_buffer := crlf||tabs(4)||'<concern_role_id>'||PDC_participant_list (i)||'</concern_role_id>'||crlf||tabs(4)||'<concern_role_name>'||l_CONCERNROLENAME||'</concern_role_name>';
+        ELSE
+          PDC_buffer := PDC_buffer||crlf||tabs(4)||'<concern_role_id>'||PDC_participant_list (i)||'</concern_role_id>'||crlf||tabs(4)||'<concern_role_name>'||l_CONCERNROLENAME||'</concern_role_name>';
+        END IF;
+IF debug_print > 0 THEN dbms_output.put_line('PDC_buffer='||PDC_buffer); END IF;
+--        dbms_output.put(PDC_buffer);
+      END LOOP;
+      If LENGTH(PDC_buffer) + LENGTH('</product_delivery_case>')  > 32767 THEN
+--        dbms_output.put(PDC_buffer);
+        PDC_buffer := crlf||tabs(3)||'</product_delivery_case>';
+      ELSE
+        PDC_buffer := PDC_buffer||crlf||tabs(3)||'</product_delivery_case>';
+      END IF;
+--      dbms_output.put(PDC_buffer);
+      o_integratedcase := o_integratedcase || PDC_buffer;
+      PDC_buffer := '';
+      pdc_case_reference := NULL; /* Reset for mixed PDC cases */
+IF debug_print > 0 THEN dbms_output.put_line('o_integratedcase='||o_integratedcase); END IF;
+    END IF; /* no PDCs found for this IC */
+/*******************************************************************************************************************************************************************************/
+--    l_n_rowcount := dbms_sql.fetch_rows(c_getBLOB);
+IF debug_print > 0 THEN dbms_output.put_line('l_n_rowcount/numberOfBLOBs='||l_n_rowcount||'/'||numberOfBLOBs); END IF;
+    EXIT WHEN numberOfBLOBs = l_n_rowcount;
+  END LOOP; /* for each BLOB there should be an active related PDC */
+<<NoPDCs>>--  IF numberOfBLOBs = 0 OR number_of_participants = 0 THEN
+IF debug_print > 0 THEN dbms_output.put_line('l_n_rowcount/numberOfBLOBs/finalParticipantCount='||l_n_rowcount||'/'||numberOfBLOBs||'/'||finalParticipantCount); END IF;
+  IF numberOfBLOBs = 0 OR finalParticipantCount = 0 THEN
+    dbms_output.put_line('*********** For IC: '||  i_caseref || ', there are no PDCs ******************');
+  END IF;
+IF debug_print > 0 THEN dbms_output.put_line('At Close Cursor,  PDCsFound=' || sys.diutil.bool_to_int(PDCsFound)); END IF;
+  IF PDCsFound THEN 
+    o_integratedcase := o_integratedcase||crlf||tabs(2)||'</product_delivery_cases>'||crlf||tabs(1)||'</integratedcase>'||crlf||'</integrated_cases>';
+  ELSE 
+    o_integratedcase := '<?xml version="1.0" standalone="yes"?><integrated_cases xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">'
+          ||crlf||tabs(1)||'<integratedcase>'||crlf||tabs(2)||'<integrated_case_reference>'||i_caseref|| '</integrated_case_reference>'||crlf||tabs(2)||'<product_delivery_cases>'||'</product_delivery_cases>'||crlf||tabs(1)||'</integratedcase>'||crlf||'</integrated_cases>';
+  END IF;
+EXCEPTION
+   WHEN NO_DATA_FOUND THEN  -- catches all 'no data found' errors
+    dbms_output.put_line('No data found for IC: '||i_caseref);
+   END;
+END;

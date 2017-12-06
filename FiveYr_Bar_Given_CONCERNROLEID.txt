@@ -1,0 +1,403 @@
+create or replace 
+PROCEDURE FiveYr_Bar_Given_CONCERNROLEID
+(
+ i_IC                   IN /* schemaname */ CASEHEADER.CASEREFERENCE%TYPE,
+ i_concernroleid        IN /* schemaname */ CASEHEADER.CONCERNROLEID%TYPE,
+ i_debug_print          IN                  INTEGER DEFAULT 0, /* 0 ==> don't print, 1 ==> print */
+ i_add_header           IN                  INTEGER DEFAULT 1, /* 0 ==> no header, 1 ==> add header */
+ i_output_format        IN                  INTEGER DEFAULT 1, /* 1 ==> XML, 2 ==> pipe-delimited */
+ o_response_code        OUT                 VARCHAR2,
+ o_response_text        OUT                 VARCHAR2,
+ o_user_details_CLOB    OUT                 CLOB  
+)
+IS
+BEGIN
+DECLARE
+--  tabs                    tabsarray;
+  crlf                    VARCHAR2(2) := chr(13)||chr(10);
+  i                       INTEGER;
+  j                       INTEGER;
+  RC                      varchar2(30);
+  RM                      varchar2(1000);
+  v_ret                   CLOB;
+  l_IC                    VARCHAR2(50); /* Allow for multiple ICs to be reported back */
+  l_caseid                CASEHEADER.CASEID%TYPE;
+  l_evidenceid            DYNAMICEVIDENCEDATAATTRIBUTE.EVIDENCEID%TYPE;
+  l_successionid                NUMBER := NULL;
+  l_effectivefrom               DATE;
+  nextEndDate                   VARCHAR2(4000) := '';
+  l_first_of_the_year           VARCHAR2(30);
+  TYPE char_table_type IS VARRAY(40) OF CASEHEADER.CASEREFERENCE%TYPE;
+  TYPE numbers_table_type IS VARRAY(40) OF NUMBER;
+  TYPE dates_table_type   IS VARRAY(40) OF DATE;
+  l_concernroleid               CASEHEADER.CONCERNROLEID%TYPE;
+  l_caseidarray                 numbers_table_type;
+  l_casereferencearray          char_table_type;
+  l_participantarray            numbers_table_type;
+  l_successionidarray           numbers_table_type;
+  l_evidencetypearray           char_table_type;
+  l_evidenceidarray             numbers_table_type;
+  l_effectivefromarray          dates_table_type;
+  l_caseparticipantarray        numbers_table_type;
+  l_rankarray                   numbers_table_type;
+  l_participant                 NUMBER;
+  relatedFilers                 VARCHAR2(1000);
+  cs_approxDocsReceiveDate      VARCHAR2(4000) := '';
+  cs_caseParticipantRoleID      VARCHAR2(4000) := '';
+  cs_citizenStatusCode          VARCHAR2(4000) := '';
+  cs_comments                   VARCHAR2(4000) := '';
+  cs_dateOfEntry                VARCHAR2(4000) := '';
+  cs_dhsCaseNumber              VARCHAR2(4000) := '';
+  cs_isRetroCitizenship         VARCHAR2(4000) := '';
+  cs_dhsCaseStatus              VARCHAR2(4000) := '';
+  cs_dhsCaseStatusNew           VARCHAR2(4000) := '';
+  cs_docsMailDate               VARCHAR2(4000) := '';
+  cs_endDate                    VARCHAR2(4000) := '';
+  cs_exemptedImmigrationStatus  VARCHAR2(4000) := '';
+  cs_isProductTypePresumptive   VARCHAR2(4000) := '';
+  cs_startDate                  VARCHAR2(4000) := '';
+  ss_comments                   VARCHAR2(4000) := '';
+  ss_raiseOutStandVerification  VARCHAR2(4000) := ''; 
+  ss_lprStatusDate              VARCHAR2(4000) := ''; 
+  ss_lawfulPresenceVerifiedCode VARCHAR2(4000) := ''; 
+  ss_g845MajorCode              VARCHAR2(4000) := ''; 
+  ss_fiveYearBarMetCode         VARCHAR2(4000) := ''; 
+  ss_fiveYearBarApplyStatus     VARCHAR2(4000) := ''; 
+  ss_errorDescription           VARCHAR2(4000) := ''; 
+  ss_errorCode                  VARCHAR2(4000) := ''; 
+  ss_citizenshipVerified        VARCHAR2(4000) := ''; 
+  ss_webServSftwrVer            VARCHAR2(4000) := ''; 
+  ss_verificationCode           VARCHAR2(4000) := ''; 
+  ss_usCitizenCode              VARCHAR2(4000) := ''; 
+  ss_startDate                  VARCHAR2(4000) := ''; 
+  ss_qualfiedNonCitizenCode     VARCHAR2(4000) := ''; 
+  ss_pendStatusDesc             VARCHAR2(4000) := ''; 
+  ss_nonCitizenStatus           VARCHAR2(4000) := ''; 
+  ss_nonCitEntryDate            VARCHAR2(4000) := ''; 
+  ss_nonCitCoaCode              VARCHAR2(4000) := ''; 
+  ss_lawfulPresenceVerified     VARCHAR2(4000) := ''; 
+  ss_grantDate                  VARCHAR2(4000) := ''; 
+  ss_fiveYearBarMetStatus       VARCHAR2(4000) := ''; 
+  ss_fiveYearBarApplyCode       VARCHAR2(4000) := ''; 
+  ss_endDate                    VARCHAR2(4000) := ''; 
+  ss_eligStatementTxt           VARCHAR2(4000) := ''; 
+  ss_eligStatementCd            VARCHAR2(4000) := ''; 
+  ss_dhsCaseStatus              VARCHAR2(4000) := ''; 
+  ss_dhsCaseNumber              VARCHAR2(4000) := ''; 
+  ss_dhsAutotriggerStepTwo      VARCHAR2(4000) := ''; 
+  ss_dhsAutotriggerStepThree    VARCHAR2(4000) := ''; 
+  ss_coaCode                    VARCHAR2(4000) := ''; 
+  ss_citizenshipSource          VARCHAR2(4000) := ''; 
+  ss_caseParticipantRoleID      VARCHAR2(4000) := ''; 
+BEGIN
+  l_evidenceidarray := numbers_table_type(100); /* initialize */
+  l_evidencetypearray := char_table_type(100); /* initialize */
+  l_concernroleid := i_concernroleid;
+  o_user_details_CLOB := '';
+IF i_debug_print > 0 THEN dbms_output.put_line('START - params: i_IC='||i_IC||' i_concernroleid='||i_concernroleid||' i_debug_print='||i_debug_print||' i_add_header='||i_add_header||' i_output_format='||i_output_format); END IF;
+  SELECT CASEID INTO l_caseid FROM CASEHEADER WHERE CASEREFERENCE = i_IC; 
+
+/* Find ALL cases this concernroleid is involved in - other concernroleids may be found */
+  SELECT DISTINCT CPR.PARTICIPANTROLEID, CH.CASEREFERENCE, CH.CASEID BULK COLLECT INTO l_participantarray, l_casereferencearray, l_caseidarray 
+    FROM CASEHEADER CH, CASEPARTICIPANTROLE CPR WHERE CH.CASEREFERENCE = i_IC AND CPR.PARTICIPANTROLEID = l_concernroleid AND CH.CASEID = CPR.CASEID AND CPR.TYPECODE IN ('PRI', 'MEM') AND 
+      CH.CASETYPECODE = 'CT5' /* Integrated Case */ AND CH.STATUSCODE = 'CS4'/* OPEN */; 
+
+IF i_debug_print > 0 THEN dbms_output.put_line('l_casereferencearray.count='||l_casereferencearray.count); END IF;
+  CASE 
+     WHEN l_casereferencearray.count = 0 THEN 
+        o_response_code := 'NO_DATA_FOUND'; 
+        o_response_text := 'No IC found for input concernroleid: ' || l_concernroleid; 
+        l_IC := 'NO ICs';        
+     WHEN l_casereferencearray.count >= 1 THEN
+IF i_debug_print > 0 THEN dbms_output.put_line('l_concernroleid='||l_concernroleid); END IF;
+IF i_debug_print > 0 THEN
+  FOR i IN 1..l_casereferencearray.count
+  LOOP
+    dbms_output.put_line('l_casereferencearray('||i||')='||l_casereferencearray(i));
+    dbms_output.put_line('l_participantarray('||i||')='||l_participantarray(i));
+    dbms_output.put_line('l_caseidarray('||i||')='||l_caseidarray(i));
+  END LOOP;
+END IF;
+        FOR j IN 1..l_casereferencearray.count /* find caseid that matches input concernroleid and yields results */
+        LOOP
+IF i_debug_print > 0 THEN dbms_output.put_line('In loop l_concernroleid='||l_concernroleid||' l_participantarray('||j||')='||l_participantarray(j)); END IF;
+          IF l_participantarray(j) <> l_concernroleid THEN 
+            CONTINUE;
+          ELSE 
+            IF o_response_text IS NULL THEN 
+              o_response_text := l_casereferencearray(j);
+            ELSE
+              o_response_text := o_response_text || ', ' || l_casereferencearray(j);
+            END IF;
+            l_caseid := l_caseidarray(j);
+            l_IC := o_response_text;
+          END IF;
+IF i_debug_print > 0 THEN dbms_output.put_line('l_IC='||l_IC||' l_caseid='||l_caseid||' l_concernroleid='||l_concernroleid); END IF;
+
+/* Find latest active 5-year bar values for this person and this IC and this evidence's history */
+          SELECT ED.EVIDENCETYPE, ED.SUCCESSIONID, TO_DATE(TO_CHAR(EFFECTIVEFROM, 'YYYYMMDD'), 'YYYYMMDD'), RELATEDID, 
+            --DENSE_RANK() OVER (PARTITION BY ED.SUCCESSIONID ORDER BY ED.SUCCESSIONID, NVL(ED.EFFECTIVEFROM,TO_DATE('00010101', 'YYYYMMDD')) DESC) Succession_Rank
+            DENSE_RANK() OVER (PARTITION BY ED.PARTICIPANTID ORDER BY ED.RECEIVEDDATE DESC) AS Succession_Rank /* 20171010, Marty Brown, Changed selection criteria for citizenship-related records */
+            BULK COLLECT INTO  l_evidencetypearray, l_successionidarray, l_effectivefromarray, l_evidenceidarray, l_rankarray
+            FROM EVIDENCEDESCRIPTOR ED WHERE ED.PARTICIPANTID = l_concernroleid AND ED.CASEID = l_caseid AND 
+              ED.EVIDENCETYPE IN ('DET0026032' /* Citizen Status */,'DET0026043' /* Citizenship Status */) AND ED.STATUSCODE = 'EDS1';
+
+IF i_debug_print > 0 THEN dbms_output.put_line('DEBUGEVIDENCEDESCRIPTOR1: l_evidenceidarray.count= '||l_evidenceidarray.count); END IF;
+          FOR i IN 1..l_evidenceidarray.count
+          LOOP
+IF i_debug_print > 0 THEN dbms_output.put_line('l_rankarray('||i||')='||l_rankarray(i)); END IF;
+IF i_debug_print > 0 THEN dbms_output.put_line('l_successionidarray('||i||')='||l_successionidarray(i)); END IF;
+IF i_debug_print > 0 THEN dbms_output.put_line('l_effectivefromarray('||i||')='||l_effectivefromarray(i)); END IF;
+IF i_debug_print > 0 THEN dbms_output.put_line('l_evidenceidarray('||i||')='||l_evidenceidarray(i)); END IF;
+IF i_debug_print > 0 THEN dbms_output.put_line(' l_evidencetypearray('||i||')='|| l_evidencetypearray(i)); END IF;
+            l_evidenceid := l_evidenceidarray(i);
+            IF  l_evidencetypearray(i) = 'DET0026032'
+            THEN
+        /* Search for DET0026032 (Citizen data) using the evidenceid */
+              BEGIN SELECT TO_CHAR(TO_DATE(VALUE, 'YYYYMMDD'), 'YYYYMMDD') INTO cs_startDate FROM DYNAMICEVIDENCEDATAATTRIBUTE WHERE EVIDENCEID = l_evidenceidarray(i) AND NAME =  'startDate';
+              EXCEPTION WHEN NO_DATA_FOUND THEN null; END; --Do nothing
+              IF (l_effectivefromarray(i) IS NOT NULL AND l_effectivefromarray(i) <> TO_DATE('00010101', 'YYYYMMDD')) THEN cs_startDate := TO_CHAR(l_effectivefromarray(i), 'YYYYMMDD'); END IF; /* 20170925, George Gluck, Fix to use sucessionid rank properly */
+IF i_debug_print > 0 THEN dbms_output.put_line('cs_startDate1='||TO_CHAR(TO_DATE(cs_startDate, 'YYYYMMDD'), 'YYYYMMDD')); END IF;
+IF i_debug_print > 0 THEN dbms_output.put_line('TO_CHAR(TO_DATE(cs_startDate) - 1)='||TO_CHAR(TO_DATE(cs_startDate, 'YYYYMMDD') - 1, 'YYYYMMDD')); END IF;
+              BEGIN SELECT VALUE INTO cs_endDate FROM DYNAMICEVIDENCEDATAATTRIBUTE WHERE EVIDENCEID = l_evidenceidarray(i) AND NAME =  'endDate';
+              EXCEPTION WHEN NO_DATA_FOUND THEN null; END; --Do nothing
+              IF l_rankarray(i) > 1 THEN cs_endDate := nextEndDate; END IF; /* 20170925, George Gluck, Fix to use sucessionid rank properly */
+              nextEndDate :=TO_CHAR(TO_DATE(cs_startDate, 'YYYYMMDD') - 1, 'YYYYMMDD'); /* 20170925, George Gluck, Fix to use sucessionid rank properly */
+IF i_debug_print > 0 THEN dbms_output.put_line('l_rankarray('||i||')/cs_endDate/nextEndDate='||l_rankarray(i)||'/'||cs_endDate||'/'||nextEndDate); END IF;
+              BEGIN SELECT VALUE INTO cs_caseParticipantRoleID FROM DYNAMICEVIDENCEDATAATTRIBUTE WHERE EVIDENCEID = l_evidenceidarray(i) AND NAME =  'caseParticipantRoleID';
+              EXCEPTION WHEN NO_DATA_FOUND THEN null; END; --Do nothing 
+              BEGIN SELECT VALUE INTO cs_approxDocsReceiveDate FROM DYNAMICEVIDENCEDATAATTRIBUTE WHERE EVIDENCEID = l_evidenceidarray(i) AND NAME =  'approxDocsReceiveDate';
+              EXCEPTION WHEN NO_DATA_FOUND THEN null; END; --Do nothing 
+              BEGIN SELECT VALUE INTO cs_citizenStatusCode FROM DYNAMICEVIDENCEDATAATTRIBUTE WHERE EVIDENCEID = l_evidenceidarray(i) AND NAME =  'citizenStatusCode';
+              EXCEPTION WHEN NO_DATA_FOUND THEN null; END; --Do nothing 
+              BEGIN SELECT VALUE INTO cs_comments FROM DYNAMICEVIDENCEDATAATTRIBUTE WHERE EVIDENCEID = l_evidenceidarray(i) AND NAME =  'comments';
+              EXCEPTION WHEN NO_DATA_FOUND THEN null; END; --Do nothing 
+              BEGIN SELECT VALUE INTO cs_dateOfEntry FROM DYNAMICEVIDENCEDATAATTRIBUTE WHERE EVIDENCEID = l_evidenceidarray(i) AND NAME =  'dateOfEntry';
+              EXCEPTION WHEN NO_DATA_FOUND THEN null; END; --Do nothing 
+              BEGIN SELECT VALUE INTO cs_dhsCaseNumber FROM DYNAMICEVIDENCEDATAATTRIBUTE WHERE EVIDENCEID = l_evidenceidarray(i) AND NAME =  'dhsCaseNumber';
+              EXCEPTION WHEN NO_DATA_FOUND THEN null; END; --Do nothing 
+              BEGIN SELECT VALUE INTO cs_dhsCaseStatus FROM DYNAMICEVIDENCEDATAATTRIBUTE WHERE EVIDENCEID = l_evidenceidarray(i) AND NAME =  'dhsCaseStatus';
+              EXCEPTION WHEN NO_DATA_FOUND THEN null; END; --Do nothing 
+              BEGIN SELECT VALUE INTO cs_dhsCaseStatusNew FROM DYNAMICEVIDENCEDATAATTRIBUTE WHERE EVIDENCEID = l_evidenceidarray(i) AND NAME =  'dhsCaseStatusNew';
+              EXCEPTION WHEN NO_DATA_FOUND THEN null; END; --Do nothing 
+              BEGIN SELECT VALUE INTO cs_docsMailDate FROM DYNAMICEVIDENCEDATAATTRIBUTE WHERE EVIDENCEID = l_evidenceidarray(i) AND NAME =  'docsMailDate';
+              EXCEPTION WHEN NO_DATA_FOUND THEN null; END; --Do nothing 
+              BEGIN SELECT VALUE INTO cs_exemptedImmigrationStatus FROM DYNAMICEVIDENCEDATAATTRIBUTE WHERE EVIDENCEID = l_evidenceidarray(i) AND NAME =  'exemptedImmigrationStatus';
+              EXCEPTION WHEN NO_DATA_FOUND THEN null; END; --Do nothing 
+IF i_debug_print > 0 THEN dbms_output.put_line('cs_citizenStatusCode='||cs_citizenStatusCode); END IF;
+IF i_debug_print > 0 THEN dbms_output.put_line('cs_comments='||cs_comments); END IF;
+IF i_debug_print > 0 THEN dbms_output.put_line('cs_citizenStatusCode='||cs_citizenStatusCode); END IF;
+IF i_debug_print > 0 THEN dbms_output.put_line('cs_caseParticipantRoleID='||cs_caseParticipantRoleID); END IF;
+            ELSE /* DET0026043 */              
+              BEGIN SELECT TO_CHAR(TO_DATE(VALUE, 'YYYYMMDD'), 'YYYYMMDD') INTO ss_startDate FROM DYNAMICEVIDENCEDATAATTRIBUTE WHERE EVIDENCEID = l_evidenceidarray(i) AND NAME =  'startDate';
+              EXCEPTION WHEN NO_DATA_FOUND THEN null; END; --Do nothing
+              IF (l_effectivefromarray(i) IS NOT NULL AND l_effectivefromarray(i) <> TO_DATE('00010101', 'YYYYMMDD')) THEN ss_startDate := TO_CHAR(l_effectivefromarray(i), 'YYYYMMDD'); END IF; /* 20170925, George Gluck, Fix to use sucessionid rank properly */
+IF i_debug_print > 0 THEN dbms_output.put_line('ss_startDate1='||TO_CHAR(TO_DATE(ss_startDate, 'YYYYMMDD'), 'YYYYMMDD')); END IF;
+IF i_debug_print > 0 THEN dbms_output.put_line('TO_CHAR(TO_DATE(ss_startDate) - 1)='||TO_CHAR(TO_DATE(ss_startDate, 'YYYYMMDD') - 1, 'YYYYMMDD')); END IF;
+              BEGIN SELECT VALUE INTO ss_endDate FROM DYNAMICEVIDENCEDATAATTRIBUTE WHERE EVIDENCEID = l_evidenceidarray(i) AND NAME =  'endDate';
+              EXCEPTION WHEN NO_DATA_FOUND THEN null; END; --Do nothing
+              IF l_rankarray(i) > 1 THEN cs_endDate := nextEndDate; END IF; /* 20170925, George Gluck, Fix to use sucessionid rank properly */
+              nextEndDate :=TO_CHAR(TO_DATE(ss_startDate, 'YYYYMMDD') - 1, 'YYYYMMDD'); /* 20170925, George Gluck, Fix to use sucessionid rank properly */
+IF i_debug_print > 0 THEN dbms_output.put_line('l_rankarray('||i||')/ss_endDate/nextEndDate='||l_rankarray(i)||'/'||ss_endDate||'/'||nextEndDate); END IF;
+              BEGIN SELECT VALUE INTO ss_caseParticipantRoleID FROM DYNAMICEVIDENCEDATAATTRIBUTE WHERE EVIDENCEID = l_evidenceidarray(i) AND NAME =  'caseParticipantRoleID';
+              EXCEPTION WHEN NO_DATA_FOUND THEN null; END; --Do nothing 
+              BEGIN SELECT VALUE INTO ss_comments FROM DYNAMICEVIDENCEDATAATTRIBUTE WHERE EVIDENCEID = l_evidenceidarray(i) AND NAME =  'comments';
+              EXCEPTION WHEN NO_DATA_FOUND THEN null; END; --Do nothing 
+              BEGIN SELECT VALUE INTO ss_raiseOutStandVerification FROM DYNAMICEVIDENCEDATAATTRIBUTE WHERE EVIDENCEID = l_evidenceidarray(i) AND NAME =  'raiseOutStandVerification';
+              EXCEPTION WHEN NO_DATA_FOUND THEN null; END; --Do nothing 
+              BEGIN SELECT VALUE INTO ss_lprStatusDate FROM DYNAMICEVIDENCEDATAATTRIBUTE WHERE EVIDENCEID = l_evidenceidarray(i) AND NAME =  'lprStatusDate';
+              EXCEPTION WHEN NO_DATA_FOUND THEN null; END; --Do nothing 
+              BEGIN SELECT VALUE INTO ss_lawfulPresenceVerifiedCode FROM DYNAMICEVIDENCEDATAATTRIBUTE WHERE EVIDENCEID = l_evidenceidarray(i) AND NAME =  'lawfulPresenceVerifiedCode';
+              EXCEPTION WHEN NO_DATA_FOUND THEN null; END; --Do nothing 
+              BEGIN SELECT VALUE INTO ss_g845MajorCode FROM DYNAMICEVIDENCEDATAATTRIBUTE WHERE EVIDENCEID = l_evidenceidarray(i) AND NAME =  'g845MajorCode';
+              EXCEPTION WHEN NO_DATA_FOUND THEN null; END; --Do nothing 
+              BEGIN SELECT VALUE INTO ss_fiveYearBarMetCode FROM DYNAMICEVIDENCEDATAATTRIBUTE WHERE EVIDENCEID = l_evidenceidarray(i) AND NAME =  'fiveYearBarMetCode';
+              EXCEPTION WHEN NO_DATA_FOUND THEN null; END; --Do nothing 
+IF i_debug_print > 0 THEN dbms_output.put_line('ss_fiveYearBarMetCode='||ss_fiveYearBarMetCode); END IF;
+              BEGIN SELECT VALUE INTO ss_fiveYearBarApplyStatus FROM DYNAMICEVIDENCEDATAATTRIBUTE WHERE EVIDENCEID = l_evidenceidarray(i) AND NAME =  'fiveYearBarApplyStatus';
+              EXCEPTION WHEN NO_DATA_FOUND THEN null; END; --Do nothing 
+IF i_debug_print > 0 THEN dbms_output.put_line('ss_fiveYearBarApplyStatus='||ss_fiveYearBarApplyStatus); END IF;
+              BEGIN SELECT VALUE INTO ss_errorDescription FROM DYNAMICEVIDENCEDATAATTRIBUTE WHERE EVIDENCEID = l_evidenceidarray(i) AND NAME =  'errorDescription';
+              EXCEPTION WHEN NO_DATA_FOUND THEN null; END; --Do nothing 
+              BEGIN SELECT VALUE INTO ss_errorCode FROM DYNAMICEVIDENCEDATAATTRIBUTE WHERE EVIDENCEID = l_evidenceidarray(i) AND NAME =  'errorCode';
+              EXCEPTION WHEN NO_DATA_FOUND THEN null; END; --Do nothing 
+              BEGIN SELECT VALUE INTO ss_citizenshipVerified FROM DYNAMICEVIDENCEDATAATTRIBUTE WHERE EVIDENCEID = l_evidenceidarray(i) AND NAME =  'citizenshipVerified';
+              EXCEPTION WHEN NO_DATA_FOUND THEN null; END; --Do nothing 
+              BEGIN SELECT VALUE INTO ss_webServSftwrVer FROM DYNAMICEVIDENCEDATAATTRIBUTE WHERE EVIDENCEID = l_evidenceidarray(i) AND NAME =  'webServSftwrVer';
+              EXCEPTION WHEN NO_DATA_FOUND THEN null; END; --Do nothing 
+              BEGIN SELECT VALUE INTO ss_verificationCode FROM DYNAMICEVIDENCEDATAATTRIBUTE WHERE EVIDENCEID = l_evidenceidarray(i) AND NAME =  'verificationCode';
+              EXCEPTION WHEN NO_DATA_FOUND THEN null; END; --Do nothing 
+              BEGIN SELECT VALUE INTO ss_usCitizenCode FROM DYNAMICEVIDENCEDATAATTRIBUTE WHERE EVIDENCEID = l_evidenceidarray(i) AND NAME =  'usCitizenCode';
+              EXCEPTION WHEN NO_DATA_FOUND THEN null; END; --Do nothing 
+              BEGIN SELECT VALUE INTO ss_qualfiedNonCitizenCode FROM DYNAMICEVIDENCEDATAATTRIBUTE WHERE EVIDENCEID = l_evidenceidarray(i) AND NAME =  'qualfiedNonCitizenCode';
+              EXCEPTION WHEN NO_DATA_FOUND THEN null; END; --Do nothing 
+              BEGIN SELECT VALUE INTO ss_pendStatusDesc FROM DYNAMICEVIDENCEDATAATTRIBUTE WHERE EVIDENCEID = l_evidenceidarray(i) AND NAME =  'pendStatusDesc';
+              EXCEPTION WHEN NO_DATA_FOUND THEN null; END; --Do nothing 
+              BEGIN SELECT VALUE INTO ss_nonCitizenStatus FROM DYNAMICEVIDENCEDATAATTRIBUTE WHERE EVIDENCEID = l_evidenceidarray(i) AND NAME =  'nonCitizenStatus';
+              EXCEPTION WHEN NO_DATA_FOUND THEN null; END; --Do nothing 
+              BEGIN SELECT VALUE INTO ss_nonCitEntryDate FROM DYNAMICEVIDENCEDATAATTRIBUTE WHERE EVIDENCEID = l_evidenceidarray(i) AND NAME =  'nonCitEntryDate';
+              EXCEPTION WHEN NO_DATA_FOUND THEN null; END; --Do nothing 
+              BEGIN SELECT VALUE INTO ss_nonCitCoaCode FROM DYNAMICEVIDENCEDATAATTRIBUTE WHERE EVIDENCEID = l_evidenceidarray(i) AND NAME =  'nonCitCoaCode';
+              EXCEPTION WHEN NO_DATA_FOUND THEN null; END; --Do nothing 
+              BEGIN SELECT VALUE INTO ss_lawfulPresenceVerified FROM DYNAMICEVIDENCEDATAATTRIBUTE WHERE EVIDENCEID = l_evidenceidarray(i) AND NAME =  'lawfulPresenceVerified';
+              EXCEPTION WHEN NO_DATA_FOUND THEN null; END; --Do nothing 
+              BEGIN SELECT VALUE INTO ss_grantDate FROM DYNAMICEVIDENCEDATAATTRIBUTE WHERE EVIDENCEID = l_evidenceidarray(i) AND NAME =  'grantDate';
+              EXCEPTION WHEN NO_DATA_FOUND THEN null; END; --Do nothing 
+              BEGIN SELECT VALUE INTO ss_fiveYearBarMetStatus FROM DYNAMICEVIDENCEDATAATTRIBUTE WHERE EVIDENCEID = l_evidenceidarray(i) AND NAME =  'fiveYearBarMetStatus';
+              EXCEPTION WHEN NO_DATA_FOUND THEN null; END; --Do nothing 
+IF i_debug_print > 0 THEN dbms_output.put_line('ss_fiveYearBarMetStatus='||ss_fiveYearBarMetStatus); END IF;
+              BEGIN SELECT VALUE INTO ss_fiveYearBarApplyCode FROM DYNAMICEVIDENCEDATAATTRIBUTE WHERE EVIDENCEID = l_evidenceidarray(i) AND NAME =  'fiveYearBarApplyCode';
+              EXCEPTION WHEN NO_DATA_FOUND THEN null; END; --Do nothing 
+IF i_debug_print > 0 THEN dbms_output.put_line('ss_fiveYearBarApplyCode='||ss_fiveYearBarApplyCode); END IF;
+              BEGIN SELECT VALUE INTO ss_eligStatementTxt FROM DYNAMICEVIDENCEDATAATTRIBUTE WHERE EVIDENCEID = l_evidenceidarray(i) AND NAME =  'eligStatementTxt';
+              EXCEPTION WHEN NO_DATA_FOUND THEN null; END; --Do nothing 
+              BEGIN SELECT VALUE INTO ss_eligStatementCd FROM DYNAMICEVIDENCEDATAATTRIBUTE WHERE EVIDENCEID = l_evidenceidarray(i) AND NAME =  'eligStatementCd';
+              EXCEPTION WHEN NO_DATA_FOUND THEN null; END; --Do nothing 
+              BEGIN SELECT VALUE INTO ss_dhsCaseStatus FROM DYNAMICEVIDENCEDATAATTRIBUTE WHERE EVIDENCEID = l_evidenceidarray(i) AND NAME =  'dhsCaseStatus';
+              EXCEPTION WHEN NO_DATA_FOUND THEN null; END; --Do nothing 
+              BEGIN SELECT VALUE INTO ss_dhsCaseNumber FROM DYNAMICEVIDENCEDATAATTRIBUTE WHERE EVIDENCEID = l_evidenceidarray(i) AND NAME =  'dhsCaseNumber';
+              EXCEPTION WHEN NO_DATA_FOUND THEN null; END; --Do nothing 
+              BEGIN SELECT VALUE INTO ss_dhsAutotriggerStepTwo FROM DYNAMICEVIDENCEDATAATTRIBUTE WHERE EVIDENCEID = l_evidenceidarray(i) AND NAME =  'dhsAutotriggerStepTwo';
+              EXCEPTION WHEN NO_DATA_FOUND THEN null; END; --Do nothing 
+              BEGIN SELECT VALUE INTO ss_dhsAutotriggerStepThree FROM DYNAMICEVIDENCEDATAATTRIBUTE WHERE EVIDENCEID = l_evidenceidarray(i) AND NAME =  'dhsAutotriggerStepThree';
+              EXCEPTION WHEN NO_DATA_FOUND THEN null; END; --Do nothing 
+              BEGIN SELECT VALUE INTO ss_coaCode FROM DYNAMICEVIDENCEDATAATTRIBUTE WHERE EVIDENCEID = l_evidenceidarray(i) AND NAME =  'coaCode';
+              EXCEPTION WHEN NO_DATA_FOUND THEN null; END; --Do nothing 
+              BEGIN SELECT VALUE INTO ss_citizenshipSource FROM DYNAMICEVIDENCEDATAATTRIBUTE WHERE EVIDENCEID = l_evidenceidarray(i) AND NAME =  'citizenshipSource';
+              EXCEPTION WHEN NO_DATA_FOUND THEN null; END; --Do nothing 
+IF i_debug_print > 0 THEN dbms_output.put_line('ss_citizenshipSource='||ss_citizenshipSource); END IF;
+            END IF; /*DET0026032 or DET0026043 */
+          END LOOP; /* FOR i IN 1..l_evidenceidarray.count */
+        END LOOP; /* FOR j IN 1..l_casereferencearray.count  */
+     ELSE o_response_code := 'ERROR'; o_response_text := 'Error : ' || sqlerrm; RETURN;
+  END CASE;
+  IF i_output_format = 1 THEN /* XML */
+    o_user_details_CLOB :=  o_user_details_CLOB ||
+      '<FiveYearBar_info>'||
+      '<evidenceID_cs>'||
+      '<cs_evidenceID>'||l_evidenceid||'</cs_evidenceID>'||
+      '<cs_comments>'||cs_comments||'</cs_comments>'||
+      '<cs_dhsCaseStatus>'||cs_dhsCaseStatus||'</cs_dhsCaseStatus>'||
+      '<cs_isRetroCitizenship>'||cs_isRetroCitizenship||'</cs_isRetroCitizenship>'||
+      '<cs_dhsCaseNumber>'||cs_dhsCaseNumber||'</cs_dhsCaseNumber>'||
+      '<cs_docsMailDate>'||cs_docsMailDate||'</cs_docsMailDate>'||
+      '<cs_endDate>'||cs_endDate||'</cs_endDate>'||
+      '<cs_citizenStatusCode>'||cs_citizenStatusCode||'</cs_citizenStatusCode>'||
+      '<cs_exemptedImmigrationStatus>'||cs_exemptedImmigrationStatus||'</cs_exemptedImmigrationStatus>'||
+      '<cs_isProductTypePresumptive>'||cs_isProductTypePresumptive||'</cs_isProductTypePresumptive>'||
+      '<cs_caseParticipantRoleID>'||cs_caseParticipantRoleID||'</cs_caseParticipantRoleID>'||
+      '<cs_ParticipantRoleID>'||l_concernroleid||'</cs_ParticipantRoleID>'||
+      '<cs_dhsCaseStatusNew>'||cs_dhsCaseStatusNew||'</cs_dhsCaseStatusNew>'||
+      '<cs_approxDocsReceiveDate>'||cs_approxDocsReceiveDate||'</cs_approxDocsReceiveDate>'||
+      '<cs_dateOfEntry>'||cs_dateOfEntry||'</cs_dateOfEntry>'||
+      '<cs_startDate>'||cs_startDate||'</cs_startDate>' ||
+      '</evidenceID_cs>'||
+      '<evidenceID_ss>'||
+      '<ss_evidenceID>'||l_evidenceid||'</ss_evidenceID>'||
+      '<ss_raiseOutStandVerification>'||ss_raiseOutStandVerification||'</ss_raiseOutStandVerification>'||
+      '<ss_lprStatusDate>'||ss_lprStatusDate||'</ss_lprStatusDate>'||
+      '<ss_lawfulPresenceVerifiedCode>'||ss_lawfulPresenceVerifiedCode||'</ss_lawfulPresenceVerifiedCode>'||
+      '<ss_g845MajorCode>'||ss_g845MajorCode||'</ss_g845MajorCode>'||
+      '<ss_fiveYearBarMetCode>'||ss_fiveYearBarMetCode||'</ss_fiveYearBarMetCode>'||
+      '<ss_fiveYearBarApplyStatus>'||ss_fiveYearBarApplyStatus||'</ss_fiveYearBarApplyStatus>'||
+      '<ss_errorDescription>'||ss_errorDescription||'</ss_errorDescription>'||
+      '<ss_errorCode>'||ss_errorCode||'</ss_errorCode>'||
+      '<ss_citizenshipVerified>'||ss_citizenshipVerified||'</ss_citizenshipVerified>'||
+      '<ss_webServSftwrVer>'||ss_webServSftwrVer||'</ss_webServSftwrVer>'||
+      '<ss_verificationCode>'||ss_verificationCode||'</ss_verificationCode>'||
+      '<ss_usCitizenCode>'||ss_usCitizenCode||'</ss_usCitizenCode>'||
+      '<ss_startDate>'||ss_startDate||'</ss_startDate>'||
+      '<ss_qualfiedNonCitizenCode>'||ss_qualfiedNonCitizenCode||'</ss_qualfiedNonCitizenCode>'||
+      '<ss_pendStatusDesc>'||ss_pendStatusDesc||'</ss_pendStatusDesc>'||
+      '<ss_nonCitizenStatus>'||ss_nonCitizenStatus||'</ss_nonCitizenStatus>'||
+      '<ss_nonCitEntryDate>'||ss_nonCitEntryDate||'</ss_nonCitEntryDate>'||
+      '<ss_nonCitCoaCode>'||ss_nonCitCoaCode||'</ss_nonCitCoaCode>'||
+      '<ss_lawfulPresenceVerified>'||ss_lawfulPresenceVerified||'</ss_lawfulPresenceVerified>'||
+      '<ss_grantDate>'||ss_grantDate||'</ss_grantDate>'||
+      '<ss_fiveYearBarMetStatus>'||ss_fiveYearBarMetStatus||'</ss_fiveYearBarMetStatus>'||
+      '<ss_fiveYearBarApplyCode>'||ss_fiveYearBarApplyCode||'</ss_fiveYearBarApplyCode>'||
+      '<ss_endDate>'||ss_endDate||'</ss_endDate>'||
+      '<ss_eligStatementTxt>'||ss_eligStatementTxt||'</ss_eligStatementTxt>'||
+      '<ss_eligStatementCd>'||ss_eligStatementCd||'</ss_eligStatementCd>'||
+      '<ss_dhsCaseStatus>'||ss_dhsCaseStatus||'</ss_dhsCaseStatus>'||
+      '<ss_dhsCaseNumber>'||ss_dhsCaseNumber||'</ss_dhsCaseNumber>'||
+      '<ss_dhsAutotriggerStepTwo>'||ss_dhsAutotriggerStepTwo||'</ss_dhsAutotriggerStepTwo>'||
+      '<ss_dhsAutotriggerStepThree>'||ss_dhsAutotriggerStepThree||'</ss_dhsAutotriggerStepThree>'||
+      '<ss_coaCode>'||ss_coaCode||'</ss_coaCode>'||
+      '<ss_citizenshipSource>'||ss_citizenshipSource||'</ss_citizenshipSource>'||
+      '<ss_caseParticipantRoleID>'||ss_caseParticipantRoleID||'</ss_caseParticipantRoleID>'||
+      '<ss_ParticipantRoleID>'||l_concernroleid||'</ss_ParticipantRoleID>'||
+      '</evidenceID_ss>'||
+      '</FiveYearBar_info>'
+      ;
+  ELSE
+    o_user_details_CLOB := o_user_details_CLOB ||
+      l_IC||'|'||
+      l_concernroleid||'|'||
+      l_caseid||'|'||
+      l_evidenceid||'|'||
+      cs_startDate||'|'||
+      cs_endDate||'|'||
+      cs_dateOfEntry||'|'||
+      cs_caseParticipantRoleID||'|'||
+      cs_dhsCaseStatus||'|'||
+      cs_isRetroCitizenship||'|'||
+      cs_dhsCaseNumber||'|'||
+      cs_docsMailDate||'|'||
+      cs_exemptedImmigrationStatus||'|'||
+      cs_isProductTypePresumptive||'|'||
+      cs_dhsCaseStatusNew||'|'||
+      cs_approxDocsReceiveDate||'|'||
+      cs_comments||'|'||
+      l_evidenceid||'|'||
+      ss_fiveYearBarMetCode||'|'||
+      ss_fiveYearBarApplyStatus||'|'||
+      ss_lprStatusDate||'|'||
+      ss_citizenshipVerified||'|'||
+      ss_errorCode||'|'||
+      ss_errorDescription||'|'||
+      ss_caseParticipantRoleID||'|'||
+      ss_raiseOutStandVerification||'|'||
+      ss_lawfulPresenceVerifiedCode||'|'||
+      ss_g845MajorCode||'|'||
+      ss_webServSftwrVer||'|'||
+      ss_verificationCode||'|'||
+      ss_usCitizenCode||'|'||
+      ss_startDate||'|'||
+      ss_qualfiedNonCitizenCode||'|'||
+      ss_pendStatusDesc||'|'||
+      ss_nonCitizenStatus||'|'||
+      ss_nonCitEntryDate||'|'||
+      ss_nonCitCoaCode||'|'||
+      ss_lawfulPresenceVerified||'|'||
+      ss_grantDate||'|'||
+      ss_fiveYearBarMetStatus||'|'||
+      ss_fiveYearBarApplyCode||'|'||
+      ss_endDate||'|'||
+      ss_eligStatementTxt||'|'||
+      ss_eligStatementCd||'|'||
+      ss_dhsCaseStatus||'|'||
+      ss_dhsCaseNumber||'|'||
+      ss_dhsAutotriggerStepTwo||'|'||
+      ss_dhsAutotriggerStepThree||'|'||
+      ss_coaCode||'|'||
+      ss_citizenshipSource||'|'
+      ;
+  END IF;
+  IF o_user_details_CLOB IS NULL THEN
+    o_response_code := 'NO_DATA_FOUND'; 
+    o_response_text := 'No 5-year bar data found for input concernroleid and generated caseid: ' || i_concernroleid || ' ' || l_caseid;
+  ELSE
+    o_response_code := 'DATA_FOUND'; 
+    o_response_text := '5-year bar data found for input concernroleid and generated caseid: ' || i_concernroleid || ' ' || l_caseid;
+  END IF;
+  IF i_output_format = 1 THEN
+    o_user_details_CLOB := '<FiveYearBar>' || o_user_details_CLOB || '</FiveYearBar>';
+    IF i_add_header <> 0 THEN o_user_details_CLOB := '<?xml version="1.0" standalone="yes"?>' || o_user_details_CLOB; END IF;
+  END IF;
+  RETURN;
+EXCEPTION
+    WHEN NO_DATA_FOUND THEN
+IF i_debug_print > 0 THEN dbms_output.put_line('Error Code:'||SQLCODE||chr(10)||'Error Text:'||SQLERRM); END IF;
+END; /* Execution */
+END; /* DECLARE */

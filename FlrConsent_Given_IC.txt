@@ -1,0 +1,190 @@
+create or replace 
+PROCEDURE FlrConsent_Given_IC
+(
+ i_IC		                IN                  VARCHAR2, /* single IC */
+ i_debug_print          IN                  INTEGER DEFAULT 0, /* 0 ==> don't print, 1 ==> print */
+ i_add_header           IN                  INTEGER DEFAULT 1, /* 0 ==> no header, 1 ==> add header */
+ i_output_format        IN                  INTEGER DEFAULT 1, /* 1 ==> XML, 2 ==> pipe-delimited */
+ o_response_code        OUT                 VARCHAR2,
+ o_response_text        OUT                 VARCHAR2,
+ o_user_details_CLOB    OUT                 CLOB  
+)
+IS
+BEGIN
+DECLARE
+--  tabs                    tabsarray;
+  crlf                    VARCHAR2(2) := chr(13)||chr(10);
+  i                       INTEGER;
+  RC                      varchar2(30);
+  RM                      varchar2(1000);
+  v_ret                   CLOB;
+  --l_IC_List               VARCHAR2(10000); /* Allow for multiple ICs to be input */
+  --IC_array                apex_application_global.vc_arr2;
+  l_caseid                CASEHEADER.CASEID%TYPE;
+  --l_evidenceid            DYNAMICEVIDENCEDATAATTRIBUTE.EVIDENCEID%TYPE;
+  l_successionid          NUMBER := NULL;
+  l_effectivefrom         DATE;
+  nextEndDate             VARCHAR2(4000) := '';
+  TYPE char_table_type IS VARRAY(40) OF CASEHEADER.CASEREFERENCE%TYPE;
+  TYPE numbers_table_type IS VARRAY(40) OF NUMBER;
+  TYPE dates_table_type   IS VARRAY(40) OF DATE;
+  l_concernroleid               CASEHEADER.CONCERNROLEID%TYPE;
+  l_caseidarray                 numbers_table_type;
+  l_casereferencearray          char_table_type;
+  l_lastupdatedbyarray          char_table_type;
+  l_participantarray            numbers_table_type;
+  l_successionidarray           numbers_table_type;
+  l_evidenceidarray             numbers_table_type;
+  l_effectivefromarray          dates_table_type;
+  l_rankarray                   numbers_table_type;
+  afc_consentForIRSRenewals     VARCHAR2(4000) := '';
+  afc_yearsToRenewCoverage			VARCHAR2(4000) := '';
+  afc_startDate					        VARCHAR2(4000) := '';
+  afc_endDate					          VARCHAR2(4000) := '';
+  afc_consentToTruthfulAnswers	VARCHAR2(4000) := '';
+  afc_consentMedicaidReimburse	VARCHAR2(4000) := '';
+  afc_consentToShareInfoExtern	VARCHAR2(4000) := '';
+  afc_consentToCoopForMedSup	  VARCHAR2(4000) := '';
+  afc_consentToNotifyOfChange		VARCHAR2(4000) := '';
+  afc_registerToVote					  VARCHAR2(4000) := '';
+  afc_eSignatureFirstName		  	VARCHAR2(4000) := '';
+  afc_eSignatureMiddleName			VARCHAR2(4000) := '';
+  afc_eSignatureLastName				VARCHAR2(4000) := '';
+  afc_caseParticipantRoleID			VARCHAR2(4000) := '';
+  
+BEGIN
+  --IC_array := apex_util.string_to_table(i_IC_List, ',');
+--IF i_debug_print > 0 THEN dbms_output.put_line('IC_array.cnt = '||IC_array.count); END IF;
+  --FOR i IN 1..IC_array.count
+  --LOOP
+  SELECT CASEID, CONCERNROLEID INTO l_caseid, l_concernroleid FROM CASEHEADER WHERE CASEREFERENCE = i_IC;
+IF i_debug_print > 0 THEN dbms_output.put_line('l_caseid/l_concernroleid='||l_caseid||'/'||l_concernroleid); END IF;    
+IF i_debug_print > 0 THEN dbms_output.put_line('IC='||i_IC); END IF;    
+    SELECT ED.RELATEDID, ED.PARTICIPANTID, ED.SUCCESSIONID, ED.EFFECTIVEFROM, ED.LASTUPDATEDBY, RANK() OVER (PARTITION BY ED.PARTICIPANTID ORDER BY ED.RECEIVEDDATE DESC, ED.LASTUPDATEDON DESC) 
+      BULK COLLECT INTO l_evidenceidarray, l_participantarray, l_successionidarray, l_effectivefromarray, l_lastupdatedbyarray, l_rankarray
+      FROM EVIDENCEDESCRIPTOR ED, CASEPARTICIPANTROLE CPR WHERE ED.STATUSCODE = 'EDS1' /* ACTIVE */ AND ED.EVIDENCETYPE = 'DET0026070' /* Application Filer Consent */ AND 
+        ED.CASEID = l_caseid AND CPR.CASEID = l_caseid AND ED.PARTICIPANTID = CPR.PARTICIPANTROLEID AND CPR.TYPECODE = 'PRI'; /* AND CHANGEREASON <> 'ECR9'/* Entered in Error */
+IF i_debug_print > 0 THEN dbms_output.put_line('l_evidenceidarray.count='||l_evidenceidarray.count); END IF;    
+    FOR j IN 1..l_evidenceidarray.count
+    LOOP
+IF i_debug_print > 0 THEN dbms_output.put_line('l_rankarray('||j||')='||l_rankarray(j)); END IF;
+IF i_debug_print > 0 THEN dbms_output.put_line('l_successionidarray('||j||')='||l_successionidarray(j)); END IF;
+IF i_debug_print > 0 THEN dbms_output.put_line('l_effectivefromarray('||j||')='||l_effectivefromarray(j)); END IF;
+IF i_debug_print > 0 THEN dbms_output.put_line('l_evidenceidarray('||j||')='||l_evidenceidarray(j)); END IF;
+IF i_debug_print > 0 THEN dbms_output.put_line('l_participantarray('||j||')='||l_participantarray(j)); END IF;
+IF i_debug_print > 0 THEN dbms_output.put_line('l_lastupdatedbyarray('||j||')='||l_lastupdatedbyarray(j)); END IF;
+      IF l_rankarray(j) = 1 THEN
+        BEGIN SELECT VALUE INTO afc_consentForIRSRenewals FROM DYNAMICEVIDENCEDATAATTRIBUTE WHERE EVIDENCEID = l_evidenceidarray(j) AND NAME = 'consentForIRSRenewals';
+        EXCEPTION WHEN NO_DATA_FOUND THEN null; END; --Do nothing
+        BEGIN SELECT VALUE INTO afc_yearsToRenewCoverage FROM DYNAMICEVIDENCEDATAATTRIBUTE WHERE EVIDENCEID = l_evidenceidarray(j) AND NAME = 'yearsToRenewCoverage';
+        EXCEPTION WHEN NO_DATA_FOUND THEN null; END; --Do nothing
+        BEGIN SELECT VALUE INTO afc_startDate FROM DYNAMICEVIDENCEDATAATTRIBUTE WHERE EVIDENCEID = l_evidenceidarray(j) AND NAME = 'startDate'; 
+        EXCEPTION WHEN NO_DATA_FOUND THEN null; END; --Do nothing
+IF i_debug_print > 0 THEN dbms_output.put_line('afc_startDate0='||afc_startDate); END IF;
+IF i_debug_print > 0 THEN dbms_output.put_line('afc_consentForIRSRenewals/afc_yearsToRenewCoverage='||afc_consentForIRSRenewals||'/'||afc_yearsToRenewCoverage); END IF;
+IF i_debug_print > 0 THEN dbms_output.put_line('l_effectivefromarray(j)='||l_effectivefromarray(j)); END IF;
+        IF l_effectivefromarray(j) IS NOT NULL THEN afc_startDate := TO_CHAR(l_effectivefromarray(j), 'YYYYMMDD'); END IF;
+IF i_debug_print > 0 THEN dbms_output.put_line('afc_startDate1='||afc_startDate); END IF;
+IF i_debug_print > 0 THEN dbms_output.put_line('TO_CHAR(TO_DATE(afc_startDate) - 1)='||TO_CHAR(TO_DATE(afc_startDate, 'YYYYMMDD') - 1)); END IF;
+        nextEndDate := TO_CHAR(TO_DATE(afc_startDate, 'YYYYMMDD') - 1);
+IF i_debug_print > 0 THEN dbms_output.put_line('nextEndDate='||nextEndDate); END IF;
+        BEGIN SELECT VALUE INTO afc_endDate FROM DYNAMICEVIDENCEDATAATTRIBUTE WHERE EVIDENCEID = l_evidenceidarray(j) AND NAME = 'endDate';
+        EXCEPTION WHEN NO_DATA_FOUND THEN null; END; --Do nothing
+IF i_debug_print > 0 THEN dbms_output.put_line('afc_endDate='||afc_endDate); END IF;
+        IF l_rankarray(j) > 1 THEN afc_endDate := nextEndDate; END IF;
+IF i_debug_print > 0 THEN dbms_output.put_line('j/afc_endDate='||j||'/'||afc_endDate); END IF;
+        BEGIN SELECT VALUE INTO afc_consentToTruthfulAnswers FROM DYNAMICEVIDENCEDATAATTRIBUTE WHERE EVIDENCEID = l_evidenceidarray(j) AND NAME = 'consentToTruthfulAnswers';
+        EXCEPTION WHEN NO_DATA_FOUND THEN null; END; --Do nothing
+        BEGIN SELECT VALUE INTO afc_consentMedicaidReimburse FROM DYNAMICEVIDENCEDATAATTRIBUTE WHERE EVIDENCEID = l_evidenceidarray(j) AND NAME = 'consenttToMedicaidReimbursement';
+        EXCEPTION WHEN NO_DATA_FOUND THEN null; END; --Do nothing
+        BEGIN SELECT VALUE INTO afc_consentToShareInfoExtern FROM DYNAMICEVIDENCEDATAATTRIBUTE WHERE EVIDENCEID = l_evidenceidarray(j) AND NAME = 'consentToShareInformationExternally';
+        EXCEPTION WHEN NO_DATA_FOUND THEN null; END; --Do nothing
+        BEGIN SELECT VALUE INTO afc_consentToCoopForMedSup FROM DYNAMICEVIDENCEDATAATTRIBUTE WHERE EVIDENCEID = l_evidenceidarray(j) AND NAME = 'consentToCooperationForMedicalSupport';
+        EXCEPTION WHEN NO_DATA_FOUND THEN null; END; --Do nothing
+        BEGIN SELECT VALUE INTO afc_consentToNotifyOfChange FROM DYNAMICEVIDENCEDATAATTRIBUTE WHERE EVIDENCEID = l_evidenceidarray(j) AND NAME = 'consentToNotifyOfChange';
+        EXCEPTION WHEN NO_DATA_FOUND THEN null; END; --Do nothing
+        BEGIN SELECT YN.DESCRIPTION INTO afc_registerToVote FROM DYNAMICEVIDENCEDATAATTRIBUTE DED JOIN CODETABLEITEM YN ON DED.VALUE = YN.CODE AND YN.TABLENAME = 'HCYesNo' WHERE DED.EVIDENCEID = l_evidenceidarray(j) AND NAME = 'registerToVote';
+        EXCEPTION WHEN NO_DATA_FOUND THEN null; END; --Do nothing
+        BEGIN SELECT VALUE INTO afc_eSignatureFirstName FROM DYNAMICEVIDENCEDATAATTRIBUTE WHERE EVIDENCEID = l_evidenceidarray(j) AND NAME = 'eSignatureFirstName';
+        EXCEPTION WHEN NO_DATA_FOUND THEN null; END; --Do nothing
+        BEGIN SELECT VALUE INTO afc_eSignatureMiddleName FROM DYNAMICEVIDENCEDATAATTRIBUTE WHERE EVIDENCEID = l_evidenceidarray(j) AND NAME = 'eSignatureMiddleName';
+        EXCEPTION WHEN NO_DATA_FOUND THEN null; END; --Do nothing
+        BEGIN SELECT VALUE INTO afc_eSignatureLastName FROM DYNAMICEVIDENCEDATAATTRIBUTE WHERE EVIDENCEID = l_evidenceidarray(j) AND NAME = 'eSignatureLastName';
+        EXCEPTION WHEN NO_DATA_FOUND THEN null; END; --Do nothing
+        BEGIN SELECT VALUE INTO afc_caseParticipantRoleID FROM DYNAMICEVIDENCEDATAATTRIBUTE WHERE EVIDENCEID = l_evidenceidarray(j) AND NAME = 'caseParticipantRoleID';
+        EXCEPTION WHEN NO_DATA_FOUND THEN null; END; --Do nothing
+        o_response_code := 'DATA_FOUND'; 
+IF i_debug_print > 0 THEN dbms_output.put_line('o_response_code='||o_response_code); END IF;
+        o_response_text := 'Filer Consent Status data found for input IC: ' || i_IC; 
+IF i_debug_print > 0 THEN dbms_output.put_line('o_response_text='||o_response_text); END IF;
+IF i_debug_print > 0 THEN dbms_output.put_line('afc_endDate='||afc_endDate); END IF;
+        IF l_rankarray(j) = 1 THEN
+IF i_debug_print > 0 THEN dbms_output.put_line('For j='||j||', afc_endDate IS NULL'); END IF;
+          IF i_output_format = 1 THEN /* XML */
+            o_user_details_CLOB := o_user_details_CLOB ||
+              '<filer_consent>'||
+              '<filer_IC>'||i_IC||'</filer_IC>'||
+              '<caseworker>'||l_lastupdatedbyarray(j)||'</caseworker>'||
+              '<consentForIRSRenewals>'||afc_consentForIRSRenewals||'</consentForIRSRenewals>'||
+              '<yearsToRenewCoverage>'||afc_yearsToRenewCoverage||'</yearsToRenewCoverage>'||
+              '<startDate>'||afc_startDate||'</startDate>'||
+              '<endDate>'||afc_endDate||'</endDate>'||    
+              '<consentToTruthfulAnswers>'||afc_consentToTruthfulAnswers||'</consentToTruthfulAnswers>'||
+              '<consenttToMedicaidReimbursement>'||afc_consentMedicaidReimburse||'</consenttToMedicaidReimbursement>'||
+              '<consentToShareInformationExternally>'||afc_consentToShareInfoExtern||'</consentToShareInformationExternally>'||
+              '<consentToCooperationForMedicalSupport>'||afc_consentToCoopForMedSup||'</consentToCooperationForMedicalSupport>'||
+              '<consentToNotifyOfChange>'||afc_consentToNotifyOfChange||'</consentToNotifyOfChange>'||
+              '<registerToVote>'||afc_registerToVote||'</registerToVote>'||
+              '<eSignatureFirstName>'||afc_eSignatureFirstName||'</eSignatureFirstName>'||
+              '<eSignatureMiddleName>'||afc_eSignatureMiddleName||'</eSignatureMiddleName>'||
+              '<eSignatureLastName>'||afc_eSignatureLastName||'</eSignatureLastName>'||
+              '<caseParticipantRoleID>'||afc_caseParticipantRoleID||'</caseParticipantRoleID>'||
+              '<participantID>'||l_participantarray(j)||'</participantID>'||
+              '<evidenceID>'||l_evidenceidarray(j)||'</evidenceID>'||
+              '</filer_consent>'
+              ;
+          ELSE
+            o_user_details_CLOB := o_user_details_CLOB || crlf ||
+              i_IC||'|'||
+              l_evidenceidarray(j)||'|'||
+              l_concernroleid||'|'||
+              l_caseid||'|'||
+              afc_consentForIRSRenewals||'|'||
+              afc_yearsToRenewCoverage||'|'||
+              afc_startDate||'|'||
+              afc_endDate||'|'||
+              afc_consentToTruthfulAnswers||'|'||
+              afc_consentMedicaidReimburse||'|'||
+              afc_consentToShareInfoExtern||'|'||
+              afc_consentToCoopForMedSup||'|'||
+              afc_consentToNotifyOfChange||'|'||
+              afc_registerToVote||'|'||
+              afc_eSignatureFirstName||'|'||
+              afc_eSignatureMiddleName||'|'||
+              afc_eSignatureLastName||'|'||
+              afc_caseParticipantRoleID||'|'||
+              l_participantarray(j)||'|'||
+              l_lastupdatedbyarray(j)||'|'
+              ;
+          END IF; /* i_output_format = 1  */
+        END IF; /* afc_endDate IS NULL */
+      END IF; /* l_rankarray(j) = 1 */
+    END LOOP; /* j IN 1..l_evidenceidarray.count */        
+  --END LOOP; /* i IN 1..IC_array.count */ 
+  IF i_output_format = 1
+  THEN
+    o_user_details_CLOB := '<FilersConsent>' || o_user_details_CLOB || '</FilersConsent>';
+    IF i_add_header = 1 
+    THEN
+      o_user_details_CLOB := '<?xml version="1.0" standalone="yes"?>' || o_user_details_CLOB;
+    END IF;
+  END IF;
+IF i_debug_print > 0 THEN dbms_output.put_line('At end o_response_code='||o_response_code); END IF;
+IF i_debug_print > 0 THEN dbms_output.put_line('At end o_response_text='||o_response_text); END IF;
+IF i_debug_print > 0 THEN dbms_output.put_line('At end o_user_details_CLOB='||o_user_details_CLOB); END IF;
+  RETURN;
+EXCEPTION
+    WHEN NO_DATA_FOUND THEN
+IF i_debug_print > 0 THEN dbms_output.put_line('Error Code:'||SQLCODE||chr(10)||'Error Text:'||SQLERRM); END IF;
+END; /* Execution */
+END; /* DECLARE */

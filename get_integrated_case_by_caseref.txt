@@ -1,0 +1,1759 @@
+create or replace 
+PROCEDURE get_integrated_case_by_caseref (
+      i_caseref          IN     caseheader.casereference%TYPE,
+   o_integratedcase      OUT CLOB)
+IS
+   i_ACRN_only_flag     BOOLEAN DEFAULT FALSE;
+BEGIN
+i_ACRN_only_flag := FALSE;
+IF i_ACRN_only_flag THEN
+  SELECT '<?xml version="1.0" standalone="yes"?>'||chr(13)||chr(10)||chr(11)||
+                '<IntegratedCase_ID>'||i_caseref||'</IntegratedCase_ID>'||chr(10)||chr(11)||chr(11)||
+                        '<AppCaseRef>'||APPLICATIONREFERENCE||'</AppCaseRef>'                            
+    INTO o_integratedcase FROM APPLICATIONCASE WHERE APPLICATIONCASEID = 
+      (SELECT CASEID FROM CASEHEADER WHERE CASETYPECODE = 'CT10201' AND CONCERNROLEID = (SELECT CONCERNROLEID FROM CASEHEADER WHERE CASEREFERENCE = i_caseref));  
+  RETURN;
+END IF;
+WITH icr
+        AS (SELECT caseid
+              FROM caseheader
+             WHERE casereference = i_caseref),                      
+        dynatt
+        AS (SELECT 
+                  *
+              FROM DYNAMICEVIDENCEDATAATTRIBUTE
+             WHERE     evidenceid IN (SELECT relatedid
+                                        FROM evidencedescriptor
+                                       WHERE     caseid =
+                                                    (SELECT caseid FROM icr)
+                                             AND statuscode = 'EDS1')
+                   AND name IN ('amount',
+                                'frequencyCode',
+                                'incomeType',
+                                'startDate',
+                                'endDate',
+                                'maximumInsuranceTaxCreditAmount',
+                                'coverageyear',
+                                'costSharingReduction',
+                                'isStateResident',
+                                'citizenStatusCode',
+                                'taxFilingStatus',
+                                'taxFilingTogether',
+                                'isEmployerSponsoredApplication',
+                                'isWithoutAssistance',
+                                'isFinancialAssistance',
+                                'isIAEligible',
+                                'dueDate',
+                                'isMedicaidCHIPEligible',
+                                'isRecievingBenefit',
+                                'residencyStatus',
+                                'incarcerationStatus',
+                                'caseParticipantRoleID',
+                                'yearsToRenewCoverage',
+                                'caseParticipantRoleID',
+                                'recipCaseParticipantRoleID',
+                                'relationShipType',
+                                'caseParticipantRoleID',
+                                'primaryApplicant',
+                                'applicant',
+                                'deductionType',
+                                'benefitType',
+                                'projectedAmount',
+                                'caseParticipantRoleID',
+                                'relTaxDepCaseParticipantRoleID')),
+        evdesc
+        AS (SELECT 
+                  *
+              FROM evidencedescriptor
+             WHERE     caseid = (SELECT caseid FROM icr)
+                   AND statuscode = 'EDS1'
+                   AND evidencetype IN ('DET0026000','DET0026002','DET0026006','DET0026008','DET0026014','DET0026023','DET0026027','DET0026029','DET0026030','DET0026032','DET0026055','DET0026064','DET0026066','DET0026070','DET45000')),
+        conrole
+        AS (SELECT 
+                  *
+              FROM concernrole
+             WHERE concernroleid IN (SELECT DISTINCT participantid
+                                       FROM evdesc)),
+        resultset3
+        AS (SELECT 
+                   DISTINCT
+                   conrole.concernroleid concern_role_id,
+                   conrole.registrationdate AS registration_date,
+                   evd1.AptcAmount,
+                   evd1.aptc_amount_created_on,
+                   evd1.aptc_amount_end_on,
+                   evd1.aptc_amount_last_updated_on,
+                   evd1.CSR,
+                   evd2.HHIncome,
+                   evd2.Frequency,
+                   evd2.IncomeType,
+                   evd2.StartDate,
+                   evd2.EndDate,
+                   evd2.income_source_case_id,
+                   evd5.IsResident,
+                   evd6.CitizenStatus,
+                   evd7.TaxStatus,
+                   evd7.TaxFilingTogether,
+                   evd7a.TaxRelationship,
+                   evd8.WA,
+                   evd8.ESA,
+                   evd8.FA,
+                   evd8.IAE,
+                   evd8.MED,
+                   evd8.BEN,
+                   evd9.IncarcerationStatus,
+                   AE1.ElementValue AS AddressLine1,
+                   AE1.CREATEDON AS add_line_1_created_on,
+                   AE1.LASTUPDATEDON AS add_line_1_last_updated_on,
+                   AE2.ElementValue AS AddressLine2,
+                   AE2.CREATEDON AS add_line_2_created_on,
+                   AE2.LASTUPDATEDON AS add_line_2_last_updated_on,
+                   AE3.ElementValue AS City,
+                   AE3.CREATEDON AS city_created_on,
+                   AE3.LASTUPDATEDON AS city_last_updated_on,
+                   AE4.ElementValue AS County,
+                   AE4.CREATEDON AS county_created_on,
+                   AE4.LASTUPDATEDON AS county_last_updated_on,
+                   SUBSTR (AE5.ElementValue, 1, 5) AS LocationPostalCode,
+                   AE5.CREATEDON AS postal_code_created_on,
+                   AE5.LASTUPDATEDON AS postal_code_last_updated_on,
+                   AE6.ElementValue AS State,
+                   AE6.CREATEDON AS state_created_on,
+                   AE6.LASTUPDATEDON AS state_last_updated_on,
+                   AE7.ElementValue AS AddressLine3,
+                   AE7.CREATEDON AS add_line_3_created_on,
+                   AE7.LASTUPDATEDON AS add_line_3_last_updated_on,
+                   EA.EmailAddress,
+                   EA.CREATEDON AS email_add_created_on,
+                   EA.LASTUPDATEDON AS email_add_last_updated_on,
+                   PN.PhoneCountryCode AS TelephoneCountryCode,
+                   PN.CREATEDON AS phone_num_created_on,
+                   PN.LASTUPDATEDON AS phone_num_last_updated_on,
+                   PN.PhoneAreaCode AS TelephoneAreaCode,
+                   PN.PhoneNumber AS TelephoneNumber,
+                   CONCAT (TRIM (PN.PhoneAreaCode), TRIM (PN.PhoneNumber))
+                      AS TelephoneNumberFull,
+                   evd10.YearsToRenewCoverage,
+                   evd10.ApplicantConsent,
+                   evd11.ParticipantID,
+                   evd11.RelationshipType,
+                   evd11.RelatedParticipantID,
+                   evd12.ApplicantID,
+                   evd12.isPrimaryApplicant,
+                   evd12.applicant,
+                   LEAST (NVL (hh_income_created_on, SYSDATE),
+                          NVL (frequency_created_on, SYSDATE),
+                          NVL (income_type_created_on, SYSDATE),
+                          NVL (start_date_created_on, SYSDATE),
+                          NVL (end_date_created_on, SYSDATE),
+                          --NVL (aptc_amount_created_on, SYSDATE),
+                          NVL (csr_created_on, SYSDATE),
+                          NVL (is_resident_created_on, SYSDATE),
+                          NVL (citizen_status_created_on, SYSDATE),
+                          NVL (tax_status_created_on, SYSDATE),
+                          NVL (tax_file_tog_created_on, SYSDATE),
+                          NVL (tax_rel_created_on, SYSDATE),
+                          NVL (incarc_status_created_on, SYSDATE),
+                          NVL (part_id_created_on, SYSDATE),
+                          NVL (rel_type_created_on, SYSDATE),
+                          NVL (rel_part_id_created_on, SYSDATE),
+                          NVL (applicant_id_created_on, SYSDATE),
+                          NVL (is_prim_appl_created_on, SYSDATE),
+                          NVL (applicant_created_on, SYSDATE),
+                          NVL (ded_src_caseid_created_on, SYSDATE),
+                          NVL (ded_type_created_on, SYSDATE),
+                          NVL (ded_freq_created_on, SYSDATE),
+                          NVL (ded_amount_created_on, SYSDATE),
+                          NVL (ded_start_date_created_on, SYSDATE),
+                          NVL (ded_end_date_created_on, SYSDATE),
+                          NVL (ben_src_caseid_created_on, SYSDATE),
+                          NVL (ben_type_created_on, SYSDATE),
+                          NVL (ben_start_date_created_on, SYSDATE),
+                          NVL (ben_end_date_created_on, SYSDATE),
+                          NVL (AE1.CREATEDON, SYSDATE),
+                          NVL (AE2.CREATEDON, SYSDATE),
+                          NVL (AE7.CREATEDON, SYSDATE),
+                          NVL (AE3.CREATEDON, SYSDATE),
+                          NVL (AE4.CREATEDON, SYSDATE),
+                          NVL (AE5.CREATEDON, SYSDATE),
+                          NVL (AE6.CREATEDON, SYSDATE),
+                          NVL (EA.CREATEDON, SYSDATE),
+                          NVL (PN.CREATEDON, SYSDATE))
+                      AS applicant_created_at,
+                   GREATEST (
+                      NVL (hh_income_last_updated_on,
+                           TO_DATE ('01011900', 'mmddyyyy')),
+                      NVL (frequency_last_updated_on,
+                           TO_DATE ('01011900', 'mmddyyyy')),
+                      NVL (income_type_last_updated_on,
+                           TO_DATE ('01011900', 'mmddyyyy')),
+                      NVL (start_date_last_updated_on,
+                           TO_DATE ('01011900', 'mmddyyyy')),
+                      NVL (end_date_last_updated_on,
+                           TO_DATE ('01011900', 'mmddyyyy')),
+                      NVL (aptc_amount_last_updated_on,
+                           TO_DATE ('01011900', 'mmddyyyy')),
+                      NVL (csr_last_updated_on,
+                           TO_DATE ('01011900', 'mmddyyyy')),
+                      NVL (is_resident_last_updated_on,
+                           TO_DATE ('01011900', 'mmddyyyy')),
+                      NVL (citizen_status_last_updated_on,
+                           TO_DATE ('01011900', 'mmddyyyy')),
+                      NVL (tax_status_last_updated_on,
+                           TO_DATE ('01011900', 'mmddyyyy')),
+                      NVL (tax_file_tog_last_updated_on,
+                           TO_DATE ('01011900', 'mmddyyyy')),
+                      NVL (tax_rel_last_updated_on,
+                           TO_DATE ('01011900', 'mmddyyyy')),
+                      NVL (incarc_status_last_updated_on,
+                           TO_DATE ('01011900', 'mmddyyyy')),
+                      NVL (part_id_last_updated_on,
+                           TO_DATE ('01011900', 'mmddyyyy')),
+                      NVL (rel_type_last_updated_on,
+                           TO_DATE ('01011900', 'mmddyyyy')),
+                      NVL (rel_part_id_last_updated_on,
+                           TO_DATE ('01011900', 'mmddyyyy')),
+                      NVL (applicant_id_last_updated_on,
+                           TO_DATE ('01011900', 'mmddyyyy')),
+                      NVL (is_prim_appl_last_updated_on,
+                           TO_DATE ('01011900', 'mmddyyyy')),
+                      NVL (applicant_last_updated_on,
+                           TO_DATE ('01011900', 'mmddyyyy')),
+                      NVL (ded_src_caseid_last_updated_on,
+                           TO_DATE ('01011900', 'mmddyyyy')),
+                      NVL (ded_type_last_updated_on,
+                           TO_DATE ('01011900', 'mmddyyyy')),
+                      NVL (ded_freq_last_updated_on,
+                           TO_DATE ('01011900', 'mmddyyyy')),
+                      NVL (ded_amount_last_updated_on,
+                           TO_DATE ('01011900', 'mmddyyyy')),
+                      NVL (ded_start_date_last_updated_on,
+                           TO_DATE ('01011900', 'mmddyyyy')),
+                      NVL (ded_end_date_last_updated_on,
+                           TO_DATE ('01011900', 'mmddyyyy')),
+                      NVL (ben_src_caseid_last_updated_on,
+                           TO_DATE ('01011900', 'mmddyyyy')),
+                      NVL (ben_type_last_updated_on,
+                           TO_DATE ('01011900', 'mmddyyyy')),
+                      NVL (ben_start_date_last_updated_on,
+                           TO_DATE ('01011900', 'mmddyyyy')),
+                      NVL (ben_end_date_last_updated_on,
+                           TO_DATE ('01011900', 'mmddyyyy')),
+                      NVL (AE1.LASTUPDATEDON,
+                           TO_DATE ('01011900', 'mmddyyyy')),
+                      NVL (AE2.LASTUPDATEDON,
+                           TO_DATE ('01011900', 'mmddyyyy')),
+                      NVL (AE7.LASTUPDATEDON,
+                           TO_DATE ('01011900', 'mmddyyyy')),
+                      NVL (AE3.LASTUPDATEDON,
+                           TO_DATE ('01011900', 'mmddyyyy')),
+                      NVL (AE4.LASTUPDATEDON,
+                           TO_DATE ('01011900', 'mmddyyyy')),
+                      NVL (AE5.LASTUPDATEDON,
+                           TO_DATE ('01011900', 'mmddyyyy')),
+                      NVL (AE6.LASTUPDATEDON,
+                           TO_DATE ('01011900', 'mmddyyyy')),
+                      NVL (EA.LASTUPDATEDON,
+                           TO_DATE ('01011900', 'mmddyyyy')),
+                      NVL (PN.LASTUPDATEDON,
+                           TO_DATE ('01011900', 'mmddyyyy')))
+                      AS applicant_modified_at,
+                   evd13.deductiontype,
+                   evd13.Ded_Freq,
+                   evd13.Ded_Amount,
+                   evd13.Ded_StartDate,
+                   evd13.Ded_EndDate,
+                   evd13.ded_src_case_id,
+                   evd14.BenefitType,
+                   evd14.Ben_startDate,
+                   evd14.Ben_endDate,
+                   evd14.ben_src_case_id,
+                   evd15.ProjectedAmount,
+                   evd15.Participant_ProjectedInc,
+                   evd15.Proj_StartDate,
+                   evd15.Proj_EndDate,
+                   evd15.proj_amount_created_on,
+                   evd15.proj_amount_last_updated_on,
+                   evd15.part_proj_inc_created_on,
+                   evd15.part_proj_inc_last_updated_on,
+                   evd15.proj_start_date_created_on,
+                   evd15.proj_start_dt_last_updated_on,
+                   evd15.proj_end_date_created_on,
+                   evd15.proj_end_date_last_updated_on,
+                   evd16.due_date, /* 20170726, George Gluck - added isPregnant */
+                   evd16.is_pregnant, /* 20170726, George Gluck - added isPregnant */
+                   evd8.esa_created_on,
+                   evd8.wa_created_on,
+                   evd8.fa_created_on,
+                   evd8.iae_created_on,
+                   evd8.med_created_on,
+                   evd8.ben_created_on,
+                   evd8.esa_last_updated_on,
+                   evd8.wa_last_updated_on,
+                   evd8.fa_last_updated_on,
+                   evd8.iae_last_updated_on,
+                   evd8.med_last_updated_on,
+                   evd8.ben_last_updated_on,
+                   evd11.part_id_created_on,
+                   evd12.applicant_created_on,
+                   evd10.appl_consent_created_on,
+                   evd10.renewal_base_year,
+                   evd11.part_id_last_updated_on,
+                   evd12.applicant_last_updated_on,
+                   evd10.appl_consent_last_updated_on,
+                   evd10.years_to_renew_last_updated_on
+              FROM conrole
+                   LEFT OUTER JOIN
+                   (SELECT ED1.participantid,
+                           ED1.sourcecaseid AS income_source_case_id,
+                           DA1.VALUE HHIncome,
+                           DA1.CREATEDON AS hh_income_created_on,
+                           DA1.LASTUPDATEDON AS hh_income_last_updated_on,
+                           DA2.VALUE Frequency,
+                           DA2.CREATEDON AS frequency_created_on,
+                           DA2.LASTUPDATEDON AS frequency_last_updated_on,
+                           DA3.VALUE IncomeType,
+                           DA3.CREATEDON AS income_type_created_on,
+                           DA3.LASTUPDATEDON AS income_type_last_updated_on,
+                           DA4.VALUE StartDate,
+                           DA4.CREATEDON AS start_date_created_on,
+                           DA4.LASTUPDATEDON AS start_date_last_updated_on,
+                           DA5.VALUE EndDate,
+                           DA5.CREATEDON AS end_date_created_on,
+                           DA5.LASTUPDATEDON AS end_date_last_updated_on
+                      FROM evdesc ED1
+                           INNER JOIN caseheader ch
+                              ON     ed1.caseid = ch.caseid
+                                 AND ch.casetypecode = 'CT5'
+                           INNER JOIN dynatt DA1
+                              ON     ED1.relatedid = DA1.evidenceid
+                                 AND DA1.NAME = 'amount'
+                           INNER JOIN dynatt DA2
+                              ON     ED1.relatedid = DA2.evidenceid
+                                 AND DA2.NAME = 'frequencyCode'
+                           INNER JOIN dynatt DA3
+                              ON     ED1.relatedid = DA3.evidenceid
+                                 AND DA3.NAME = 'incomeType'
+                           INNER JOIN dynatt DA4
+                              ON     ED1.relatedid = DA4.evidenceid
+                                 AND DA4.NAME = 'startDate'
+                           INNER JOIN dynatt DA5
+                              ON     ED1.relatedid = DA5.evidenceid
+                                 AND DA5.NAME = 'endDate'
+                     WHERE     ED1.evidencetype = 'DET0026030'
+                           AND ED1.statuscode = 'EDS1') evd2
+                      ON evd2.participantid = conrole.concernroleid
+                   LEFT OUTER JOIN
+                   (SELECT ED1.participantid,
+                           DA.VALUE AptcAmount,
+                           CASE
+                           WHEN CONCAT(DA3.VALUE,'0101') > DA2.VALUE THEN CONCAT(DA3.VALUE,'0101')
+                           ELSE DA2.VALUE
+                           END
+                           AS aptc_amount_created_on,
+                           DA12.value as aptc_amount_end_on,
+                           ED1.receiveddate AS aptc_amount_last_updated_on,
+                           DA1.VALUE CSR,
+                           DA1.CREATEDON AS csr_created_on,
+                           DA1.LASTUPDATEDON AS csr_last_updated_on
+                      FROM evdesc ED1
+                           INNER JOIN caseheader ch
+                              ON     ed1.caseid = ch.caseid
+                                 AND ch.casetypecode = 'CT5'
+                           INNER JOIN dynatt DA
+                              ON     ED1.relatedid = DA.evidenceid
+                                 AND DA.name =
+                                        'maximumInsuranceTaxCreditAmount'
+                                        INNER JOIN dynatt DA2
+                              ON     ED1.relatedid = DA2.evidenceid
+                                 AND DA2.name =
+                                        'startDate'
+                                        INNER JOIN dynatt DA12         
+                              ON     ED1.relatedid = DA12.evidenceid   
+                                 AND DA12.name =                       
+                                        'endDate' 
+                           INNER JOIN dynatt DA3
+                              ON     ED1.relatedid = DA3.evidenceid
+                                 AND DA3.name ='coverageyear'
+                           INNER JOIN dynatt DA1
+                              ON     ED1.relatedid = DA1.evidenceid
+                                 AND DA1.name = 'costSharingReduction'
+                     WHERE     ED1.evidencetype = 'DET45000'
+                           AND ED1.statuscode = 'EDS1') evd1
+                      ON evd1.participantid = conrole.concernroleid
+                   LEFT OUTER JOIN
+                   (SELECT ED1.participantid,
+                           DA.VALUE IsResident,
+                           DA.CREATEDON AS is_resident_created_on,
+                           DA.LASTUPDATEDON AS is_resident_last_updated_on
+                      FROM evdesc ED1
+                           INNER JOIN caseheader ch
+                              ON     ed1.caseid = ch.caseid
+                                 AND ch.casetypecode = 'CT5'
+                           INNER JOIN dynatt DA
+                              ON     ED1.relatedid = DA.evidenceid
+                                 AND DA.name = 'isStateResident'
+                     WHERE     ED1.evidencetype = 'DET0026027'
+                           AND ED1.statuscode = 'EDS1') evd5
+                      ON evd5.participantid = conrole.concernroleid
+/* 20170726, George Gluck - added isPregnant */
+                   LEFT OUTER JOIN
+                   (SELECT ED1.participantid,
+                           DA.VALUE due_date,
+                      (SELECT 'TRUE' from dual) AS is_pregnant     
+--                      (SELECT DECODE(((to_date(DA.VALUE) - CURRENT_DATE) - ABS(to_date(DA.VALUE) - CURRENT_DATE)), 0, 1, 0) from dual) AS is_pregnant     
+--                      (SELECT DECODE(((to_date(DA.VALUE, 'DD-MON-YYYY') - CURRENT_DATE) - ABS(to_date(DA.VALUE, 'DD-MON-YYYY') - CURRENT_DATE)), 0, 1, 0) from dual) AS is_pregnant     
+                      FROM evdesc ED1
+                           INNER JOIN caseheader ch
+                              ON     ed1.caseid = ch.caseid
+                                 AND ch.casetypecode = 'CT5'
+                           INNER JOIN dynatt DA
+                              ON     ED1.relatedid = DA.evidenceid
+                                 AND DA.name = 'dueDate'
+                     WHERE     ED1.evidencetype = 'DET0026008'
+                           AND ED1.statuscode = 'EDS1') evd16
+                      ON evd16.participantid = conrole.concernroleid
+/* 20170726, George Gluck - added isPregnant */
+                   LEFT OUTER JOIN
+                   (SELECT ED1.participantid,
+                           DA.VALUE CitizenStatus,
+                           DA.CREATEDON AS citizen_status_created_on,
+                           DA.LASTUPDATEDON AS citizen_status_last_updated_on
+                      FROM evdesc ED1
+                           INNER JOIN caseheader ch
+                              ON     ed1.caseid = ch.caseid
+                                 AND ch.casetypecode = 'CT5'
+                           INNER JOIN dynatt DA
+                              ON     ED1.relatedid = DA.evidenceid
+                                 AND DA.name = 'citizenStatusCode'
+                     WHERE     ED1.evidencetype = 'DET0026032'
+                           AND ED1.statuscode = 'EDS1') evd6
+                      ON evd6.participantid = conrole.concernroleid
+    /* 20170729, George Gluck - revert to use of EVIDENCEDESCRIPTOR table instead of EVIDENCERELATIONSHIP START */
+                   LEFT OUTER JOIN
+                   (SELECT ED7.participantid,
+                           DA.VALUE TaxStatus,
+                           DA.CREATEDON AS tax_status_created_on,
+                           DA.LASTUPDATEDON AS tax_status_last_updated_on,
+                           DA1.VALUE TaxFilingTogether,
+                           DA1.CREATEDON AS tax_file_tog_created_on,
+                           DA1.LASTUPDATEDON AS tax_file_tog_last_updated_on
+                      FROM evdesc ED7
+                           INNER JOIN caseheader ch
+                              ON     ed7.caseid = ch.caseid
+                                 AND ch.casetypecode = 'CT5'
+                           INNER JOIN dynatt DA
+                              ON     ED7.relatedid = DA.evidenceid
+                                 AND DA.name = 'taxFilingStatus'
+                           INNER JOIN dynatt DA1
+                              ON     ED7.relatedid = DA1.evidenceid
+                                 AND DA1.name = 'taxFilingTogether'
+                     WHERE     ED7.evidencetype = 'DET0026002'
+                           AND ED7.statuscode = 'EDS1') evd7
+                      ON evd7.participantid = conrole.concernroleid
+                   LEFT OUTER JOIN
+                   (SELECT ED1.participantid AS tax_rel_id,
+                                    (
+         SELECT ED7.participantid FROM (SELECT * FROM evidencedescriptor WHERE caseid = (SELECT caseid FROM (SELECT caseid FROM caseheader WHERE casereference = '3600062'))
+    AND statuscode = 'EDS1'
+    AND evidencetype IN ('DET0026002','DET0026006'))  ED7
+INNER JOIN caseheader ch ON ed7.caseid = ch.caseid AND ch.casetypecode = 'CT5'
+INNER JOIN (SELECT * FROM DYNAMICEVIDENCEDATAATTRIBUTE WHERE evidenceid IN (SELECT relatedid
+                                        FROM evidencedescriptor WHERE caseid =
+                                                    (SELECT caseid FROM (SELECT caseid FROM caseheader WHERE casereference = '3600062'))
+                                             AND statuscode = 'EDS1')
+                   AND name IN ('taxFilingStatus')) DA
+                              ON     ED7.relatedid = DA.evidenceid
+                                 AND DA.name = 'taxFilingStatus' AND DA.VALUE = 'TFS26302'
+                           INNER JOIN
+                                (SELECT * FROM DYNAMICEVIDENCEDATAATTRIBUTE WHERE evidenceid IN (SELECT relatedid
+                                        FROM evidencedescriptor WHERE caseid =
+                                                    (SELECT caseid FROM (SELECT caseid FROM caseheader WHERE casereference = '3600062'))
+                                             AND statuscode = 'EDS1')
+                   AND name IN ('taxFilingTogether')) DA1
+                              ON     ED7.relatedid = DA1.evidenceid
+                                 AND DA1.name = 'taxFilingTogether'
+                     WHERE     ED7.evidencetype = 'DET0026002'
+                           AND ED7.statuscode = 'EDS1'
+        ) tax_dep_id,
+
+--                           CPR.PARTICIPANTROLEID tax_dep_id,
+                           ED2.participantid AS  TaxRelationship,
+                           CPR.CREATEDON AS tax_rel_created_on,
+                           CPR.LASTUPDATEDON AS tax_rel_last_updated_on
+                      FROM evdesc ED1
+                           INNER JOIN caseheader ch
+                              ON     ed1.caseid = ch.caseid
+                                 AND ch.casetypecode = 'CT5'
+                           INNER JOIN dynatt DA
+                              ON  ED1.relatedid = DA.evidenceid AND
+                                  DA.NAME = 'caseParticipantRoleID'
+                           INNER JOIN /*schema_name*/CASEPARTICIPANTROLE CPR
+                              ON CPR.CASEPARTICIPANTROLEID = DA.VALUE
+                           INNER JOIN evidencerelationship EDREL
+                              ON  DA.evidenceid = EDREL.parentid
+                           INNER JOIN  evdesc ED2
+                              ON  EDREL.childid = ED2.relatedid      
+                     WHERE     ED1.evidencetype = 'DET0026002'
+                           AND ED1.statuscode = 'EDS1') evd7a
+                      ON evd7a.tax_rel_id = conrole.concernroleid
+   /* 20170729, George Gluck - revert to use of EVIDENCEDESCRIPTOR table instead of EVIDENCERELATIONSHIP END */
+                   LEFT OUTER JOIN
+                   (SELECT ED1.participantid,
+                           DA.VALUE ESA,
+                           DA.CREATEDON AS esa_created_on,
+                           DA.LASTUPDATEDON AS esa_last_updated_on,
+                           DA1.VALUE WA,
+                           DA1.CREATEDON AS wa_created_on,
+                           DA1.LASTUPDATEDON AS wa_last_updated_on,
+                           DA2.VALUE FA,
+                           DA2.CREATEDON AS fa_created_on,
+                           DA2.LASTUPDATEDON AS fa_last_updated_on,
+                           DA3.VALUE IAE,
+                           DA3.CREATEDON AS iae_created_on,
+                           DA3.LASTUPDATEDON AS iae_last_updated_on,
+                           DA4.VALUE MED,
+                           DA4.CREATEDON AS med_created_on,
+                           DA4.LASTUPDATEDON AS med_last_updated_on,
+                           DA5.VALUE BEN,
+                           DA5.CREATEDON AS ben_created_on,
+                           DA5.LASTUPDATEDON AS ben_last_updated_on,
+                           DA6.VALUE RESD,
+                           DA6.CREATEDON AS resd_created_on,
+                           DA6.LASTUPDATEDON AS resd_last_updated_on
+                      FROM evdesc ED1
+                           INNER JOIN caseheader ch
+                              ON     ed1.caseid = ch.caseid
+                                 AND ch.casetypecode = 'CT5'
+                           INNER JOIN dynatt DA
+                              ON     ED1.relatedid = DA.evidenceid
+                                 AND DA.name =
+                                        'isEmployerSponsoredApplication'
+                           INNER JOIN dynatt DA1
+                              ON     ED1.relatedid = DA1.evidenceid
+                                 AND DA1.name = 'isWithoutAssistance'
+                           INNER JOIN dynatt DA2
+                              ON     ED1.relatedid = DA2.evidenceid
+                                 AND DA2.name = 'isFinancialAssistance'
+                           INNER JOIN dynatt DA3
+                              ON     ED1.relatedid = DA3.evidenceid
+                                 AND DA3.name = 'isIAEligible'
+                           INNER JOIN dynatt DA4
+                              ON     ED1.relatedid = DA4.evidenceid
+                                 AND DA4.name = 'isMedicaidCHIPEligible'
+                           INNER JOIN dynatt DA5
+                              ON     ED1.relatedid = DA5.evidenceid
+                                 AND DA5.name = 'isRecievingBenefit'
+                           INNER JOIN dynatt DA6
+                              ON     ED1.relatedid = DA6.evidenceid
+                                 AND DA6.name = 'residencyStatus'
+                     WHERE     ED1.evidencetype = 'DET0026029'
+                           AND ED1.statuscode = 'EDS1') evd8
+                      ON evd8.participantid = conrole.concernroleid
+                   LEFT OUTER JOIN
+                   (SELECT ED1.participantid,
+                           DA.VALUE IncarcerationStatus,
+                           DA.CREATEDON AS incarc_status_created_on,
+                           DA.LASTUPDATEDON AS incarc_status_last_updated_on
+                      FROM evdesc ED1
+                           INNER JOIN caseheader ch
+                              ON     ed1.caseid = ch.caseid
+                                 AND ch.casetypecode = 'CT5'
+                           INNER JOIN dynatt DA
+                              ON     ED1.relatedid = DA.evidenceid
+                                 AND DA.name = 'incarcerationStatus'
+                     WHERE     ED1.evidencetype = 'DET0026000'
+                           AND ED1.statuscode = 'EDS1') evd9
+                      ON evd9.participantid = conrole.concernroleid
+                   LEFT OUTER JOIN
+                   (SELECT ED1.participantid,
+                           DA.VALUE YearsToRenewCoverage,
+                           DA.CREATEDON AS renewal_base_year,
+                           DA.LASTUPDATEDON AS years_to_renew_last_updated_on,
+                           CPR1.PARTICIPANTROLEID ApplicantConsent,
+                           CPR1.CREATEDON AS appl_consent_created_on,
+                           CPR1.LASTUPDATEDON AS appl_consent_last_updated_on
+                      FROM evdesc ED1
+                           INNER JOIN caseheader ch
+                              ON     ed1.caseid = ch.caseid
+                                 AND ch.casetypecode = 'CT5'
+                           INNER JOIN dynatt DA1
+                              ON     ED1.relatedid = DA1.evidenceid
+                                 AND DA1.NAME = 'caseParticipantRoleID'
+                           INNER JOIN CASEPARTICIPANTROLE CPR1
+                              ON CPR1.CASEPARTICIPANTROLEID = DA1.VALUE
+                           INNER JOIN dynatt DA
+                              ON     ED1.relatedid = DA.evidenceid
+                                 AND DA.name = 'yearsToRenewCoverage'
+                     WHERE     ED1.evidencetype = 'DET0026070'
+                           AND ED1.statuscode = 'EDS1') evd10
+                      ON evd10.participantid = conrole.concernroleid
+                   LEFT OUTER JOIN
+                   (SELECT ED1.participantid AS RELID,
+                           CPR1.PARTICIPANTROLEID ParticipantID,
+                           CPR1.CREATEDON AS part_id_created_on,
+                           CPR1.LASTUPDATEDON AS part_id_last_updated_on,
+                           DA5.VALUE RelationshipType,
+                           DA5.CREATEDON AS rel_type_created_on,
+                           DA5.LASTUPDATEDON AS rel_type_last_updated_on,
+                           CPR2.PARTICIPANTROLEID RelatedParticipantID,
+                           CPR2.CREATEDON AS rel_part_id_created_on,
+                           CPR2.LASTUPDATEDON AS rel_part_id_last_updated_on
+                      FROM evdesc ED1
+                           INNER JOIN caseheader ch
+                              ON     ed1.caseid = ch.caseid
+                                 AND ch.casetypecode = 'CT5'
+                           INNER JOIN dynatt DA1
+                              ON     ED1.relatedid = DA1.evidenceid
+                                 AND DA1.NAME = 'caseParticipantRoleID'
+                           INNER JOIN CASEPARTICIPANTROLE CPR1
+                              ON CPR1.CASEPARTICIPANTROLEID = DA1.VALUE
+                           INNER JOIN dynatt DA4
+                              ON     ED1.relatedid = DA4.evidenceid
+                                 AND DA4.NAME = 'recipCaseParticipantRoleID'
+                           INNER JOIN CASEPARTICIPANTROLE CPR2
+                              ON CPR2.CASEPARTICIPANTROLEID = DA4.VALUE
+                           INNER JOIN dynatt DA5
+                              ON     ED1.relatedid = DA5.evidenceid
+                                 AND DA5.NAME = 'relationShipType'
+                     WHERE     ED1.evidencetype = 'DET0026023'
+                           AND ED1.statuscode = 'EDS1') evd11
+                      ON evd11.RELID = conrole.concernroleid
+                   LEFT OUTER JOIN
+                   (SELECT ED1.participantid AS PRIID,
+                           CPR1.PARTICIPANTROLEID ApplicantID,
+                           CPR1.CREATEDON AS applicant_id_created_on,
+                           CPR1.LASTUPDATEDON AS applicant_id_last_updated_on,
+                           DA2.VALUE isPrimaryApplicant,
+                           DA2.CREATEDON AS is_prim_appl_created_on,
+                           DA2.LASTUPDATEDON AS is_prim_appl_last_updated_on,
+                           DA3.VALUE applicant,
+                           DA3.CREATEDON AS applicant_created_on,
+                           DA3.LASTUPDATEDON AS applicant_last_updated_on
+                      FROM evdesc ED1
+                           INNER JOIN caseheader ch
+                              ON     ed1.caseid = ch.caseid
+                                 AND ch.casetypecode = 'CT5'
+                           INNER JOIN dynatt DA1
+                              ON     ED1.relatedid = DA1.evidenceid
+                                 AND DA1.NAME = 'caseParticipantRoleID'
+                           INNER JOIN CASEPARTICIPANTROLE CPR1
+                              ON CPR1.CASEPARTICIPANTROLEID = DA1.VALUE
+                           INNER JOIN dynatt DA2
+                              ON     ED1.relatedid = DA2.evidenceid
+                                 AND DA2.NAME = 'primaryApplicant'
+                           INNER JOIN dynatt DA3
+                              ON     ED1.relatedid = DA3.evidenceid
+                                 AND DA3.NAME = 'applicant'
+                     WHERE     ED1.evidencetype = 'DET0026055'
+                           AND ED1.statuscode = 'EDS1') evd12
+                      ON evd12.PRIID = conrole.concernroleid
+                   LEFT OUTER JOIN
+                   (SELECT ED1.participantid,
+                           ED1.sourcecaseid AS ded_src_case_id,
+                           ED1.CREATEDON AS ded_src_caseid_created_on,
+                           ED1.LASTUPDATEDON
+                              AS ded_src_caseid_last_updated_on,
+                           DA1.VALUE deductiontype,
+                           DA1.CREATEDON AS ded_type_created_on,
+                           DA1.LASTUPDATEDON AS ded_type_last_updated_on,
+                           DA2.VALUE Ded_Freq,
+                           DA2.CREATEDON AS ded_freq_created_on,
+                           DA2.LASTUPDATEDON AS ded_freq_last_updated_on,
+                           DA3.VALUE Ded_Amount,
+                           DA3.CREATEDON AS ded_amount_created_on,
+                           DA3.LASTUPDATEDON AS ded_amount_last_updated_on,
+                           DA4.VALUE Ded_StartDate,
+                           DA4.CREATEDON AS ded_start_date_created_on,
+                           DA4.LASTUPDATEDON
+                              AS ded_start_date_last_updated_on,
+                           DA5.VALUE Ded_EndDate,
+                           DA5.CREATEDON AS ded_end_date_created_on,
+                           DA5.LASTUPDATEDON AS ded_end_date_last_updated_on
+                      FROM evdesc ED1
+                           INNER JOIN caseheader ch
+                              ON     ed1.caseid = ch.caseid
+                                 AND ch.casetypecode = 'CT5'
+                           INNER JOIN dynatt DA1
+                              ON     ED1.relatedid = DA1.evidenceid
+                                 AND DA1.name = 'deductionType'
+                           INNER JOIN dynatt DA2
+                              ON     ED1.relatedid = DA2.evidenceid
+                                 AND DA2.name = 'frequencyCode'
+                           INNER JOIN dynatt DA3
+                              ON     ED1.relatedid = DA3.evidenceid
+                                 AND DA3.name = 'amount'
+                           INNER JOIN dynatt DA4
+                              ON     ED1.relatedid = DA4.evidenceid
+                                 AND DA4.name = 'startDate'
+                           INNER JOIN dynatt DA5
+                              ON     ED1.relatedid = DA5.evidenceid
+                                 AND DA5.name = 'endDate'
+                     WHERE     ED1.evidencetype = 'DET0026066'
+                           AND ED1.statuscode = 'EDS1') evd13
+                      ON evd13.participantid = conrole.concernroleid
+                   LEFT OUTER JOIN
+                   (SELECT ED1.participantid,
+                           ED1.sourcecaseid AS ben_src_case_id,
+                           ED1.CREATEDON AS ben_src_caseid_created_on,
+                           ED1.LASTUPDATEDON
+                              AS ben_src_caseid_last_updated_on,
+                           DA1.VALUE BenefitType,
+                           DA1.CREATEDON AS ben_type_created_on,
+                           DA1.LASTUPDATEDON AS ben_type_last_updated_on,
+                           DA2.VALUE Ben_startDate,
+                           DA2.CREATEDON AS ben_start_date_created_on,
+                           DA2.LASTUPDATEDON
+                              AS ben_start_date_last_updated_on,
+                           DA3.VALUE Ben_endDate,
+                           DA3.CREATEDON AS ben_end_date_created_on,
+                           DA3.LASTUPDATEDON AS ben_end_date_last_updated_on
+                      FROM evdesc ED1
+                           INNER JOIN caseheader ch
+                              ON     ed1.caseid = ch.caseid
+                                 AND ch.casetypecode = 'CT5'
+                           INNER JOIN dynatt DA1
+                              ON     ED1.relatedid = DA1.evidenceid
+                                 AND DA1.name = 'benefitType'
+                           INNER JOIN dynatt DA2
+                              ON     ED1.relatedid = DA2.evidenceid
+                                 AND DA2.name = 'startDate'
+                           INNER JOIN dynatt DA3
+                              ON     ED1.relatedid = DA3.evidenceid
+                                 AND DA3.name = 'endDate'
+                     WHERE     ED1.evidencetype = 'DET0026014'
+                           AND ED1.statuscode = 'EDS1') evd14
+                      ON evd14.participantid = conrole.concernroleid
+                   LEFT OUTER JOIN
+                   (SELECT ED1.participantid,
+                           DA1.VALUE ProjectedAmount,
+                           DA1.CREATEDON AS proj_amount_created_on,
+                           DA1.LASTUPDATEDON AS proj_amount_last_updated_on,
+                           DA2.VALUE Participant_ProjectedInc,
+                           DA2.CREATEDON AS part_proj_inc_created_on,
+                           DA2.LASTUPDATEDON AS part_proj_inc_last_updated_on,
+                           DA4.VALUE Proj_StartDate,
+                           DA4.CREATEDON AS proj_start_date_created_on,
+                           DA4.LASTUPDATEDON AS proj_start_dt_last_updated_on,
+                           DA5.VALUE Proj_EndDate,
+                           DA5.CREATEDON AS proj_end_date_created_on,
+                           DA5.LASTUPDATEDON AS proj_end_date_last_updated_on
+                      FROM evdesc ED1
+                           INNER JOIN caseheader ch
+                              ON     ed1.caseid = ch.caseid
+                                 AND ch.casetypecode = 'CT5'
+                           INNER JOIN dynatt DA1
+                              ON     ED1.relatedid = DA1.evidenceid
+                                 AND DA1.NAME = 'projectedAmount'
+                           INNER JOIN dynatt DA2
+                              ON     ED1.relatedid = DA2.evidenceid
+                                 AND DA2.NAME = 'caseParticipantRoleID'
+                           INNER JOIN CASEPARTICIPANTROLE CPR1
+                              ON CPR1.CASEPARTICIPANTROLEID = DA2.VALUE
+                           INNER JOIN dynatt DA4
+                              ON     ED1.relatedid = DA4.evidenceid
+                                 AND DA4.NAME = 'startDate'
+                           INNER JOIN dynatt DA5
+                              ON     ED1.relatedid = DA5.evidenceid
+                                 AND DA5.NAME = 'endDate'
+                     WHERE     ED1.evidencetype = 'DET0026064'
+                           AND ED1.statuscode = 'EDS1') evd15
+                      ON evd15.participantid = conrole.concernroleid
+                   LEFT OUTER JOIN Address AD
+                      ON AD.AddressID = conrole.PrimaryAddressID
+                   LEFT OUTER JOIN AddressElement AE1
+                      ON     AE1.AddressID = AD.AddressID
+                         AND AE1.ElementType = 'ADD1'
+                   LEFT OUTER JOIN AddressElement AE2
+                      ON     AE2.AddressID = AD.AddressID
+                         AND AE2.ElementType = 'ADD2'
+                   LEFT OUTER JOIN AddressElement AE3
+                      ON     AE3.AddressID = AD.AddressID
+                         AND AE3.ElementType = 'CITY'
+                   LEFT OUTER JOIN AddressElement AE4
+                      ON     AE4.AddressID = AD.AddressID
+                         AND AE4.ElementType = 'USCOUNTY'
+                   LEFT OUTER JOIN AddressElement AE5
+                      ON     AE5.AddressID = AD.AddressID
+                         AND AE5.ElementType = 'ZIP'
+                   LEFT OUTER JOIN AddressElement AE6
+                      ON     AE6.AddressID = AD.AddressID
+                         AND AE6.ElementType = 'STATE'
+                   LEFT OUTER JOIN AddressElement AE7
+                      ON     AE7.AddressID = AD.AddressID
+                         AND AE7.ElementType = 'ADD3'
+                   LEFT OUTER JOIN EmailAddress EA
+                      ON EA.EmailAddressID = conrole.PrimaryEmailAddressID
+                   LEFT OUTER JOIN PhoneNumber PN
+                      ON PN.PhoneNumberID = conrole.PrimaryPhoneNumberID),
+                      
+                    
+        tempia
+        AS (SELECT /*+ MATERIALIZE */
+                   DISTINCT
+                   INTEG.CASEREFERENCE AS INTEG_CASE_REF,
+                   integ.createdon AS integ_case_created_at,
+                   integ.lastupdatedon AS integ_case_modified_at,
+                   PDC.CASEREFERENCE AS PDC_CASEREF,
+                   PDC.STATUSCODE AS PDC_STATUS_CODE,
+                   CaseStatusCT.CODE AS CASE_STATUS_CODE,
+                   CaseStatusCT.DESCRIPTION AS PDC_STATUS,
+                   PDC.REGISTRATIONDATE AS PDC_REGISTRATION_DATE,
+                   CROLE.CONCERNROLENAME AS PDC_PRIMARY_NAME,
+                   CROLE.CONCERNROLEID AS PDC_PRIMARY_APPLICANT_ID,
+                   PARTCR.CONCERNROLENAME AS PART_OF_IC,
+                   LEAST (
+                      NVL (pdc.createdon, SYSDATE),
+                      NVL (crole.createdon, SYSDATE),
+                      NVL (resultset3.part_id_created_on, SYSDATE),
+                      NVL (resultset3.applicant_created_on, SYSDATE),
+                      NVL (resultset3.esa_created_on, SYSDATE),
+                      NVL (resultset3.wa_created_on, SYSDATE),
+                      NVL (resultset3.fa_created_on, SYSDATE),
+                      NVL (resultset3.iae_created_on, SYSDATE),
+                      NVL (resultset3.med_created_on, SYSDATE),
+                      NVL (resultset3.ben_created_on, SYSDATE),
+                      NVL (resultset3.appl_consent_created_on, SYSDATE),
+                      NVL (resultset3.renewal_base_year, SYSDATE),
+                      NVL (resultset3.proj_amount_created_on, SYSDATE),
+                      NVL (resultset3.part_proj_inc_created_on, SYSDATE),
+                      NVL (resultset3.proj_start_date_created_on, SYSDATE),
+                      NVL (resultset3.proj_end_date_created_on, SYSDATE))
+                      AS pdc_created_at,
+                   GREATEST (
+                      NVL (pdc.lastupdatedon,
+                           TO_DATE ('01011900', 'mmddyyyy')),
+                      NVL (crole.lastupdatedon,
+                           TO_DATE ('01011900', 'mmddyyyy')),
+                      NVL (resultset3.part_id_last_updated_on,
+                           TO_DATE ('01011900', 'mmddyyyy')),
+                      NVL (resultset3.applicant_last_updated_on,
+                           TO_DATE ('01011900', 'mmddyyyy')),
+                      NVL (resultset3.esa_last_updated_on,
+                           TO_DATE ('01011900', 'mmddyyyy')),
+                      NVL (resultset3.wa_last_updated_on,
+                           TO_DATE ('01011900', 'mmddyyyy')),
+                      NVL (resultset3.fa_last_updated_on,
+                           TO_DATE ('01011900', 'mmddyyyy')),
+                      NVL (resultset3.iae_last_updated_on,
+                           TO_DATE ('01011900', 'mmddyyyy')),
+                      NVL (resultset3.med_last_updated_on,
+                           TO_DATE ('01011900', 'mmddyyyy')),
+                      NVL (resultset3.ben_last_updated_on,
+                           TO_DATE ('01011900', 'mmddyyyy')),
+                      NVL (resultset3.appl_consent_last_updated_on,
+                           TO_DATE ('01011900', 'mmddyyyy')),
+                      NVL (resultset3.years_to_renew_last_updated_on,
+                           TO_DATE ('01011900', 'mmddyyyy')),
+                      NVL (resultset3.proj_amount_last_updated_on,
+                           TO_DATE ('01011900', 'mmddyyyy')),
+                      NVL (resultset3.part_proj_inc_last_updated_on,
+                           TO_DATE ('01011900', 'mmddyyyy')),
+                      NVL (resultset3.proj_start_dt_last_updated_on,
+                           TO_DATE ('01011900', 'mmddyyyy')),
+                      NVL (resultset3.proj_end_date_last_updated_on,
+                           TO_DATE ('01011900', 'mmddyyyy')))
+                      AS pdc_modified_at,
+                   TRUNC ( ( (SYSDATE - per.dateofbirth) / 365)) AGE,
+                   per.dateofbirth AS date_of_birth,
+                   resultset3.concern_role_id,
+                   resultset3.registration_date,
+                   resultset3.ApplicantID AS applicant_id,
+                   resultset3.applicant_created_at,
+                   resultset3.applicant_modified_at,
+                   (SELECT cr.fullname
+                      FROM alternatename cr
+                     WHERE cr.concernroleid = resultset3.concern_role_id
+                     AND cr.nametype ='AT1')
+                      AS applicant_name,
+                   resultset3.isPrimaryApplicant AS is_primary_applicant,
+                   resultset3.applicant AS is_applicant,
+                   resultset3.HHIncome AS amount,
+                   --resultset3.income_source_case_id,
+                   --resultset3.benefit_source_case_id,
+                   --resultset3.deduction_source_case_id,
+                   pd.producttype,
+                   producttypect.description AS product_type_description,
+                   (SELECT description
+                      FROM codetableitem
+                     WHERE     code = resultset3.Frequency
+                           AND tablename = 'FrequencyCode')
+                      AS frequency,
+                   (SELECT description
+                      FROM codetableitem
+                     WHERE     code = resultset3.IncomeType
+                           AND tablename = 'IncomeType')
+                      AS income_type,
+                   CAST (
+                      TO_DATE (TRIM (resultset3.StartDate), 'YYYY-MM-DD') AS DATE)
+                      AS start_date,
+                   CAST (
+                      TO_DATE (TRIM (resultset3.EndDate), 'YYYY-MM-DD') AS DATE)
+                      AS end_date,
+                   (  SELECT COUNT (participantroleid)
+                        FROM CASEPARTICIPANTROLE cpr,
+                             caseheader ch
+                       WHERE     ch.caseid = integ.caseid
+                             AND cpr.caseid = ch.caseid
+                             AND cpr.TYPECODE IN ('MEM', 'PRI')
+                    GROUP BY ch.caseid)
+                      AS household_size,
+                   (SELECT concernrolename
+                      FROM concernrole
+                     WHERE concernroleid = resultset3.ParticipantID)
+                      AS participant_name,
+                   resultset3.ParticipantID AS participant_id,
+                   (SELECT description
+                      FROM codetableitem
+                     WHERE     code = resultset3.RelationshipType
+                           AND tablename = 'RelationshipType')
+                      AS relationship_type,
+                   (SELECT concernrolename
+                      FROM concernrole
+                     WHERE concernroleid = resultset3.RelatedParticipantID)
+                      AS related_participant_name,
+                   resultset3.RelatedParticipantID AS related_participant_id,
+                   resultset3.AptcAmount AS aptc_amount,
+                   resultset3.aptc_amount_created_on AS aptc_created_on,
+                   resultset3.aptc_amount_end_on as aptc_end_on,
+                   resultset3.aptc_amount_last_updated_on AS aptc_last_updated_on,
+                   resultset3.CSR,
+                   resultset3.IsResident AS is_resident,
+                   resultset3.due_date AS due_date, /* 20170726, George Gluck - added isPregnant */
+                   resultset3.is_pregnant AS is_pregnant, /* 20170726, George Gluck - added isPregnant */
+                   (SELECT description
+                      FROM codetableitem
+                     WHERE     code = resultset3.CitizenStatus
+                           AND tablename = 'HCCitizenshipStatus')
+                      AS Citizen_Status,
+                   (SELECT description
+                      FROM codetableitem
+                     WHERE     code = resultset3.TaxStatus
+                           AND tablename = 'TaxFilingStatusCode')
+                      AS Tax_Filing_Status,
+                   resultset3.TaxFilingTogether AS tax_filing_together,
+                   resultset3.TaxRelationship as tax_dependent,
+                   (SELECT description
+                      FROM codetableitem
+                     WHERE code = resultset3.ESA AND tablename = 'YesNo')
+                      AS is_Enrolled_For_ES_Coverage,
+                   (SELECT description
+                      FROM codetableitem
+                     WHERE code = resultset3.WA AND tablename = 'YesNo')
+                      AS is_WithOut_Assistance,
+                   (SELECT description
+                      FROM codetableitem
+                     WHERE     code = resultset3.IncarcerationStatus
+                           AND tablename = 'IncarcerationStatus')
+                      AS Incarceration_Status,
+                   resultset3.AddressLine1 AS address_line_1,
+                   resultset3.AddressLine2 AS address_line_2,
+                   resultset3.AddressLine3 AS address_line_3,
+                   resultset3.City,
+                   resultset3.County,
+                   resultset3.State,
+                   resultset3.LocationPostalCode AS postal_code,
+                   resultset3.EmailAddress AS email_address,
+                   resultset3.TelephoneCountryCode AS telephone_country_code,
+                   resultset3.TelephoneAreaCode AS telephone_area_code,
+                   resultset3.TelephoneNumber AS telephone_number,
+                   resultset3.TelephoneNumberFull AS telephone_number_full,
+                   resultset3.YearsToRenewCoverage AS years_to_renew_coverage,
+                   resultset3.appl_consent_created_on AS appl_consent_created_on,
+                   resultset3.renewal_base_year AS renewal_base_year,
+                   (SELECT concernrolename
+                      FROM concernrole
+                     WHERE concernroleid = resultset3.ApplicantConsent)
+                      AS Consent_Applicant,
+                   (SELECT description
+                      FROM codetableitem
+                     WHERE     code = resultset3.deductiontype
+                           AND tablename = 'IncomeDeduction')
+                      AS Deduction_Type,
+                   (SELECT description
+                      FROM codetableitem
+                     WHERE     code = resultset3.Ded_Freq
+                           AND tablename = 'FrequencyCode')
+                      AS Deduction_Frequency,
+                   resultset3.Ded_Amount AS Deduction_Amount, /* 20170729, George Gluck, added "AS Deduction_Amount" to fix deduction amount = income amount */
+                   CAST (
+                      TO_DATE (TRIM (resultset3.Ded_StartDate), 'YYYY-MM-DD') AS DATE)
+                      AS Deduction_Start_Date,
+                   CAST (
+                      TO_DATE (TRIM (resultset3.Ded_EndDate), 'YYYY-MM-DD') AS DATE)
+                      AS Deduction_End_Date,
+                   (SELECT description
+                      FROM codetableitem
+                     WHERE     code = resultset3.BenefitType
+                           AND tablename = 'HCBenefitType')
+                      AS Benefit_Type,
+                   CAST (
+                      TO_DATE (TRIM (resultset3.Ben_startDate), 'YYYY-MM-DD') AS DATE)
+                      AS Benefit_Start_Date,
+                   CAST (
+                      TO_DATE (TRIM (resultset3.Ben_endDate), 'YYYY-MM-DD') AS DATE)
+                      AS Benefit_End_Date,
+                   resultset3.FA AS Financial_Assistance,
+                   resultset3.IAE AS IA_Eligible, /* 20170626 - George Gluck - Fix to undo ia_eligible always 'true' */
+                   resultset3.MED AS Medicaid_CHIP_Eligible,
+                   (SELECT description
+                      FROM codetableitem
+                     WHERE     code = resultset3.BEN
+                           AND tablename = 'CoverageCode')
+                      AS Receiving_Benefit,
+                   resultset3.ProjectedAmount AS projected_amount,
+                   (SELECT concernrolename
+                      FROM concernrole
+                     WHERE concernroleid =
+                              resultset3.Participant_ProjectedInc)
+                      AS Participant_Projected_Income,
+                   CAST (
+                      TO_DATE (TRIM (resultset3.Proj_StartDate),
+                               'YYYY-MM-DD') AS DATE)
+                      AS Projected_Income_Start_Date,
+                   CAST (
+                      TO_DATE (TRIM (resultset3.Proj_EndDate), 'YYYY-MM-DD') AS DATE)
+                      AS Projected_Income_End_Date,
+                   PARTCR.CONCERNROLEID,
+                   CAST (AC.SUBMITTEDDATETIME AS TIMESTAMP)
+                      AS application_submission_date,
+--                   (SELECT CASEREFERENCE FROM CASEHEADER CHAP WHERE CHAP.CONCERNROLEID = (SELECT CONCERNROLEID FROM CASEHEADER WHERE CASEREFERENCE = i_caseref) 
+--                                                              AND CHAP.CASETYPECODE = 'CT10201') AS application_reference  -- 20170224, George Gluck, added AppCaseRef to output
+--                   AC.APPLICATIONREFERENCE AS application_reference  -- 20170125, George Gluck, added AppRef to output
+----                   (SELECT CASEREFERENCE FROM CASEHEADER CHAP WHERE CHAP.CONCERNROLEID = (SELECT CONCERNROLEID FROM CASEHEADER WHERE CASEREFERENCE = i_caseref) 
+----                                                              AND CHAP.CASETYPECODE = 'CT10201') AS application_reference  -- 20170712, George Gluck, return to AppCaseRef to output
+/* 20170713, George Gluck - Fix to avoid multiple applications returned, when only one is required */
+      (SELECT APC.APPLICATIONREFERENCE FROM APPLICATIONCASE APC, CASEHEADER CH
+        WHERE CH.CASETYPECODE = 'CT10201' AND CH.CONCERNROLEID = (SELECT CONCERNROLEID FROM CASEHEADER WHERE CASEREFERENCE = i_caseref) AND APC.STATUS <> 'ACS27002' AND APC.APPLICATIONCASEID = CH.CASEID /* 20171029 - No Closed apllications */
+          AND TO_CHAR(APC.SUBMITTEDDATETIME, 'YYYYMMDD') = (SELECT TO_CHAR(REGISTRATIONDATE, 'YYYYMMDD') FROM CASEHEADER WHERE CASEREFERENCE = i_caseref)) AS application_reference
+              FROM caseheader INTEG,
+                   caseheader PDC,
+                   PRODUCTDELIVERY PD,
+                   CASERELATIONSHIP CRP,
+                   conrole CROLE,
+                   conrole PARTCR,
+                   evdesc ED,
+                   --caseheader APC,
+                   ApplicationCase AC,
+                   PERSON PER,
+                   (SELECT CODE, DESCRIPTION
+                      FROM codetableitem
+                     WHERE     TABLENAME = 'ProductType'
+                           AND LOCALEIDENTIFIER = 'en') ProductTypeCT,
+                   (SELECT CODE, DESCRIPTION
+                      FROM codetableitem
+                     WHERE     TABLENAME = 'CaseStatus'
+                           AND LOCALEIDENTIFIER = 'en') CaseStatusCT,
+                   resultset3
+             WHERE     PDC.CASEID = PD.CASEID
+                   --AND PD.PRODUCTTYPE in ('PT26304', 'PT26305', 'PT26301')
+                   AND PDC.STATUSCODE <> 'CS3'         -- changed from = 'CS1' /* 20170619, George Gluck, open up ALL PDCs to match script that corrects the all-PDCs-for-all-participants problem; 20171030, removed comment */ 
+                   AND ProductTypeCT.CODE = PD.PRODUCTTYPE
+                   AND CROLE.CONCERNROLEID = PDC.CONCERNROLEID
+                   AND INTEG.CASEID = PDC.INTEGRATEDCASEID
+                   AND INTEG.CASEID = ED.CASEID
+                   AND PARTCR.CONCERNROLEID = ED.PARTICIPANTID
+                   AND CRP.RELATEDCASEID = INTEG.CASEID
+                   AND CRP.CASEID = AC.APPLICATIONCASEID
+                   -- AND CRP.CASEID=APC.CASEID
+                   -- AND APC.CASETYPECODE='CT10201'
+                   AND per.concernroleid = PARTCR.concernroleid
+                   -- AND resultset.caseid = AC.APPLICATIONCASEID
+                   AND resultset3.CONCERN_ROLE_ID = PARTCR.CONCERNROLEID
+                   --AND AC.APPLICATIONCASEID=APC.CASEID
+                   AND CaseStatusCT.CODE = PDC.STATUSCODE),
+        temp_notice
+        AS (SELECT DISTINCT /* !!! */
+                  tempia.*, --x1.dcas_01 as hbx_person_id, dc.concernroleid as pdc_primary_concern_role_id,
+                   crai.alternateid AS ACEDS_ID, --dchxpm.PERSONID as person_id,
+                   (SELECT description
+                      FROM codetableitem
+                     WHERE code = per.GENDER AND tablename = 'Gender')
+                      AS gender,
+                   cras.alternateid AS ssn
+              FROM tempia
+                   LEFT OUTER JOIN concernrolealternateid crai
+                      ON     tempia.concernroleid = crai.concernroleid
+                         AND crai.TypeCode = 'CA45000'
+                         AND crai.statusCode = 'RST1'
+                   LEFT OUTER JOIN concernrolealternateid cras
+                      ON     tempia.concernroleid = cras.concernroleid
+                         AND cras.TypeCode = 'CA1'
+                         AND cras.statusCode = 'RST1'
+                   LEFT OUTER JOIN person per
+                      ON tempia.concernroleid = per.concernroleid),
+        temp_taxi
+        AS (SELECT 
+                   DISTINCT integ_case_ref,
+                            concern_role_id,
+                            amount,
+                            frequency,
+                            income_type,
+                            start_date,
+                            end_date                 --, income_source_case_id
+              FROM temp_notice),
+        temp_tpaxb
+        AS (SELECT 
+                   DISTINCT concern_role_id,
+                            benefit_type,
+                            benefit_start_date,
+                            benefit_end_date,
+                            integ_case_ref          --, benefit_source_case_id
+              FROM temp_notice),
+        temp_tpaxd
+        AS (SELECT 
+                   DISTINCT concern_role_id,
+                            deduction_type,
+                            Deduction_Amount,  /* 20170729, George Gluck, changed "amount" to "AS Deduction_Amount" to fix deduction amount = income amount */
+                            frequency,
+                            deduction_start_date,
+                            deduction_end_date,
+                            integ_case_ref    --    , deduction_source_case_id
+              FROM temp_notice),
+        temp_taxr
+        AS (SELECT 
+                   DISTINCT integ_case_ref,
+                            concern_role_id,
+                            relationship_type,
+                            related_participant_name,
+                            related_participant_id
+              FROM temp_notice),
+            temp_tax_full
+             AS (SELECT 
+                   DISTINCT integ_case_ref,
+                            applicant_name,
+                            is_primary_applicant,
+                            is_applicant,
+                            date_of_birth,
+                            age,
+                            aptc_amount,
+                            aptc_created_on,
+                            aptc_end_on,
+                            aptc_last_updated_on,
+                            csr,
+                            is_resident,
+                            due_date, /* 20170726, George Gluck - added isPregnant */
+                            is_pregnant, /* 20170726, George Gluck - added isPregnant */
+                            citizen_status,
+                            tax_filing_status,
+                            tax_filing_together,
+                            incarceration_status,
+                            household_size, --applicant_created_at, applicant_modified_at,
+                            address_line_1,
+                            address_line_2,
+                            address_line_3,
+                            city,
+                            county,
+                            state,
+                            postal_code,
+                            concern_role_id,
+                            ssn,
+                            gender,
+                            email_address,
+                            telephone_country_code,
+                            telephone_area_code,
+                            telephone_number,
+                            telephone_number_full
+              FROM temp_notice),
+            temp_tax_noaptc
+             AS (SELECT /*+ MATERIALIZE INDEX(CONCERN_ROLE_ID, INTEG_CASE_REF) */
+                   DISTINCT integ_case_ref,
+                            applicant_name,
+                            is_primary_applicant,
+                            is_applicant,
+                            date_of_birth,
+                            age,
+                            is_resident,
+                            due_date, /* 20170726, George Gluck - added isPregnant */
+                            is_pregnant, /* 20170726, George Gluck - added isPregnant */
+                            citizen_status,
+                            tax_filing_status,
+                            tax_filing_together,
+                            incarceration_status,
+                            household_size, --applicant_created_at, applicant_modified_at,
+                            address_line_1,
+                            address_line_2,
+                            address_line_3,
+                            city,
+                            county,
+                            state,
+                            postal_code,
+                            concern_role_id,
+                            ssn,
+                            gender,
+                            email_address,
+                            telephone_country_code,
+                            telephone_area_code,
+                            telephone_number,
+                            telephone_number_full
+              FROM temp_notice),
+            temp_tax_aptcs
+            as (select rownum as rn, t.* from (select distinct aptc_created_on,to_char(to_date(aptc_last_updated_on,'DD-MON-YY'),'YYYYMMDD') as aptc_last_updated,aptc_amount, replace(replace(replace(csr, '%', ''), '.0', ''),'null','0') as csr from temp_tax_full  
+                where aptc_amount is not null and aptc_created_on is not null and aptc_last_updated_on is not null order by aptc_created_on desc,aptc_last_updated desc,aptc_amount desc) t),
+--                where aptc_amount is not null and aptc_created_on is not null and aptc_last_updated_on is not null and (aptc_end_on is null or to_date(aptc_end_on, 'YYYYMMDD') > sysdate) order by aptc_created_on desc,aptc_last_updated desc,aptc_amount desc) t),
+            temp_tax_th
+            as (select rownum as rn, t.* from (select concern_role_id, applicant_name, sum(age) as age from 
+                                              (select distinct concern_role_id, applicant_name, tax_filing_together, is_primary_applicant,
+                                                               tax_filing_status, tax_dependent, age from temp_notice) tf 
+                                        where (tax_filing_status = 'Tax Filer' 
+                                        and (tax_dependent is not null or is_primary_applicant = 'true'))
+                                        or (tax_filing_status = 'Tax Filer' and tax_filing_together <> 'true')
+                                        group by concern_role_id, applicant_name order by age desc) t),
+           temp_tax_aptc_mapped                                  
+           as (select ta.rn, aptc_amount, aptc_created_on,aptc_last_updated, csr, concern_role_id, applicant_name, age 
+               from temp_tax_aptcs ta left outer join temp_tax_th th
+               on ta.rn = th.rn),                                    
+          temp_tax_u
+              as (select * from temp_tax_noaptc where tax_filing_status = 'Tax Dependent'
+                  union
+                  (select * from temp_tax_noaptc a where 
+                         (select count(*) from temp_tax_noaptc b where 
+                         a.concern_role_id = b.concern_role_id and b.tax_filing_status = 'Tax Dependent')<1)),
+            temp_tax
+            as (select tu.*, tam.aptc_amount as aptc_amount,tam.aptc_created_on as aptc_created_on,tam.aptc_last_updated as aptc_last_updated, tam.csr as csr 
+                from temp_tax_u tu left outer join temp_tax_aptc_mapped tam
+                on tu.concern_role_id = tam.concern_role_id),
+            temp_tax_dep
+            as (SELECT /*+ MATERIALIZE INDEX(CONCERN_ROLE_ID, INTEG_CASE_REF) */
+                  DISTINCT integ_case_ref,
+                           concern_role_id,
+                           tax_dependent
+                FROM temp_notice where tax_dependent is not NULL),
+        temp_tpax
+        AS (SELECT /*+ MATERIALIZE */
+                   DISTINCT concern_role_id,
+                            participant_id,
+                            applicant_name,
+                            consent_applicant,
+                            is_enrolled_for_es_coverage,
+                            is_without_assistance,
+                            years_to_renew_coverage,
+                            appl_consent_created_on,
+                            renewal_base_year,
+                            financial_assistance,
+                            ia_eligible,
+                            medicaid_chip_eligible,
+                            receiving_benefit,
+                            projected_amount,
+                            participant_projected_income,
+                            projected_income_start_date,
+                            projected_income_end_date,
+                            application_submission_date,
+                            producttype,
+                            pdc_caseref,
+                            integ_case_ref
+              --benefit_type, benefit_start_date, benefit_end_date,
+              --deduction_type, frequency, Deduction_Amount, deduction_start_date, deduction_end_date /* 20170729, George Gluck, changed "amount" to "AS Deduction_Amount" to fix deduction amount = income amount */
+              FROM temp_notice),
+        temp_res
+        AS (SELECT /*+ MATERIALIZE */
+                   DISTINCT integ_case_ref,
+                            pdc_caseref,
+                            pdc_primary_name,
+                            producttype,
+                            pdc_status_code,
+                            pdc_registration_date,
+                            product_type_description,
+                            pdc_primary_applicant_id
+              -- pdc_primary_concern_role_id
+              --pdc_created_at, pdc_modified_at
+              FROM temp_notice),
+        aptc
+        AS (SELECT /*+ MATERIALIZE INDEX(CONCERN_ROLE_ID, INTEG_CASE_REF) */
+                   DISTINCT integ_case_ref,
+                            concern_role_id,
+                            aptc_amount,
+                            aptc_created_on,
+                            aptc_last_updated_on
+                                             --, aptc_source_case_id
+              FROM temp_notice),     
+        persid
+        AS (SELECT 
+                   DISTINCT
+                   p.personid AS person_id,
+                   p.concernroleid AS concern_role_id,
+                   x.dcas_01 AS hbx_person_id
+              FROM dchxpersonmapping p, DCASLCLUAT_SOAINFRA.xref_subscriber x
+             WHERE p.personid = x.crm_01),
+        partid
+        AS (SELECT 
+                   DISTINCT participant_id, concern_role_id
+              FROM temp_notice),
+        acedsid
+        AS (SELECT 
+                   DISTINCT aceds_id, concern_role_id
+              FROM temp_notice),
+        inlink 
+        AS (select * from INTAKEAPPCONCERNROLELINK
+            where concernroleid in (select distinct concernroleid from conrole)),
+        inapp
+        AS (select * from INTAKEAPPLICATION 
+            where intakeapplicationid in (select distinct intakeapplicationid from inlink)),
+        connav
+        AS (select * from consentnavigator
+            where username in (select distinct enteredbyuser from inapp)),
+        exuspart
+        AS (select * from EXTERNALUSERPARTICIPANTLINK
+            where participantroleid in (select distinct navigatorid from connav)),
+        broker_license
+        AS (select licn.*, prov.enrollmentdatetime as start_date from license licn,provider prov
+            where licn.providerconcernroleid = prov.providerconcernroleid
+            AND licn.providerconcernroleid in (select distinct participantroleid from exuspart)
+            ORDER BY prov.enrollmentdatetime desc)
+   SELECT XMLSERIALIZE ( /* !!! */
+             CONTENT XMLROOT (
+                        XMLELEMENT (
+                           "integrated_cases",
+                           XMLAttributes (
+                              'http://www.w3.org/2001/XMLSchema-instance' AS "xmlns:xsi"),
+                           (SELECT XMLAGG (
+                                      XMLELEMENT (
+                                         "integrated_case",
+                                         XMLELEMENT (
+                                            "integrated_case_reference",
+                                            integ_case_ref),
+                                         XMLELEMENT (
+                                            "application_submission_date",
+                                            application_submission_date),
+                                            XMLELEMENT (  -- 20170125, George Gluck, added AppRef to output
+                                              "AppCaseRef", --  (20170224, George Gluck, Tag now AppCaseRef)
+                                              application_reference), 
+                                         XMLELEMENT (
+                                            "curam_applicants",
+                                            (SELECT XMLAGG (
+                                                       XMLELEMENT (
+                                                          "curam_applicant",
+                                                          XMLELEMENT (
+                                                             "identifier_sets",
+                                                             XMLELEMENT (
+                                                                "identifier_set",
+                                                                (SELECT XMLAGG (
+                                                                           XMLELEMENT (
+                                                                              "person_id",
+                                                                              person_id))
+                                                                   FROM persid pr
+                                                                  WHERE pr.concern_role_id =
+                                                                           tax.concern_role_id),
+                                                                (SELECT XMLAGG (
+                                                                           XMLELEMENT (
+                                                                              "participant_id",
+                                                                              participant_id))
+                                                                   FROM partid pid
+                                                                  WHERE pid.concern_role_id =
+                                                                           tax.concern_role_id),
+                                                                (SELECT XMLAGG (
+                                                                           XMLELEMENT (
+                                                                              "hbx_person_id",
+                                                                              hbx_person_id))
+                                                                   FROM persid hp
+                                                                  WHERE hp.concern_role_id =
+                                                                           tax.concern_role_id),
+                                                                (SELECT XMLAGG (
+                                                                           XMLELEMENT (
+                                                                              "aceds_id",
+                                                                              aceds_id))
+                                                                   FROM acedsid a
+                                                                  WHERE a.concern_role_id =
+                                                                           tax.concern_role_id))),
+                                                          XMLELEMENT (
+                                                             "concern_role_id",
+                                                             concern_role_id),
+                                                          XMLELEMENT (
+                                                             "full_name",
+                                                             applicant_name),
+                                                          XMLELEMENT (
+                                                             "is_primary_applicant",
+                                                             is_primary_applicant),
+                                                          XMLELEMENT (
+                                                             "date_of_birth",
+                                                             date_of_birth),
+                                                          XMLELEMENT ("age",
+                                                                      age),
+                                                          XMLELEMENT (
+                                                             "gender",
+                                                             gender),
+                                                          XMLELEMENT ("ssn",
+                                                                      ssn),
+                                                             XMLELEMENT (
+                                                             "allocated_aptcs",
+                                                             (SELECT XMLAGG (
+                                                             XMLELEMENT (
+                                                                           "allocated_aptc",
+                                                                        XMLELEMENT (
+                                                                           "aptc_amount",
+                                                                           aptc_amount),
+                                                                           XMLELEMENT (
+                                                                              "aptc_start_date",
+                                                                              aptc_created_on),
+                                                                              XMLELEMENT (
+                                                                              "aptc_created_on",
+                                                                              aptc_last_updated_on) --XMLElement("source_case_id", income_source_case_id )
+                                                                                       )
+                                                                        ORDER BY
+                                                                           aptc_created_on ASC)
+                                                                FROM aptc 
+                                                               WHERE     aptc.integ_case_ref =
+                                                                            tax.integ_case_ref
+                                                                     AND aptc.concern_role_id =
+                                                                            tax.concern_role_id)),
+                                                                            XMLELEMENT (
+                                                             "aptc_amount",
+                                                             aptc_amount),
+                                                             XMLELEMENT (
+                                                                              "aptc_start_date",
+                                                                              aptc_created_on),
+                                                                              XMLELEMENT (
+                                                                              "aptc_created_on",
+                                                                              aptc_last_updated),
+                                                          XMLELEMENT ("csr",
+                                                                      csr),
+                                                          XMLELEMENT (
+                                                             "is_resident",
+                                                             is_resident),
+                                                          XMLELEMENT (
+                                                             "is_pregnant", /* 20170726, George Gluck - added isPregnant */
+                                                             1),                                                             
+--                                                             'TRUE'),                                                             
+--                                                           is_pregnant),                                                             
+ --                                                           (SELECT DECODE(((to_date(due_date) - CURRENT_DATE) - ABS(to_date(due_date) - CURRENT_DATE)), 0, 1, 0) from dual)),                                                                                                                        (SELECT DECODE(((to_date(due_date, 'DD-MON-YYYY') - CURRENT_DATE) - ABS(to_date(due_date, 'DD-MON-YYYY') - CURRENT_DATE)), 0, 1, 0) from dual)),                                                             
+--                                                            (SELECT DECODE(((to_date(due_date, 'DD-MON-YYYY') - CURRENT_DATE) - ABS(to_date(due_date, 'DD-MON-YYYY') - CURRENT_DATE)), 0, 1, 0) from dual)),                                                                                                                        (SELECT DECODE(((to_date(due_date, 'DD-MON-YYYY') - CURRENT_DATE) - ABS(to_date(due_date, 'DD-MON-YYYY') - CURRENT_DATE)), 0, 1, 0) from dual)),                                                             
+                                                          XMLELEMENT (
+                                                             "due_date", /* 20170726, George Gluck - added isPregnant */
+                                                             due_date),
+                                                          XMLELEMENT (
+                                                             "is_applicant",
+                                                             is_applicant),
+                                                          XMLELEMENT (
+                                                             "citizen_status",
+                                                             citizen_status),
+                                                          XMLELEMENT (
+                                                             "tax_filing_status",
+                                                             tax_filing_status),
+                                                          XMLELEMENT (
+                                                             "tax_filing_together",
+                                                             tax_filing_together),
+                                                          XMLELEMENT (
+                                                             "tax_dependents",
+                                                             (SELECT XMLAGG (
+                                                                        XMLELEMENT (
+                                                                           "tax_dependent",
+                                                                           tax_dependent))
+                                                                FROM temp_tax_dep taxd
+                                                               WHERE     taxd.integ_case_ref =
+                                                                            tax.integ_case_ref
+                                                                     AND taxd.concern_role_id =
+                                                                            tax.concern_role_id)),
+                                                          XMLELEMENT (
+                                                             "incarceration_status",
+                                                             incarceration_status),
+                                                          XMLELEMENT (
+                                                             "household_size",
+                                                             household_size),
+                                                          XMLELEMENT (
+                                                             "incomes",
+                                                             (SELECT XMLAGG (
+                                                                        XMLELEMENT (
+                                                                           "income",
+                                                                           XMLELEMENT (
+                                                                              "amount",
+                                                                              amount),
+                                                                           XMLELEMENT (
+                                                                              "frequency",
+                                                                              frequency),
+                                                                           XMLELEMENT (
+                                                                              "income_type",
+                                                                              income_type),
+                                                                           XMLELEMENT (
+                                                                              "start_date",
+                                                                              start_date),
+                                                                           XMLELEMENT (
+                                                                              "end_date",
+                                                                              end_date) --XMLElement("source_case_id", income_source_case_id )
+                                                                                       )
+                                                                        ORDER BY
+                                                                           start_date DESC)
+                                                                FROM temp_taxi taxi
+                                                               WHERE     taxi.integ_case_ref =
+                                                                            tax.integ_case_ref
+                                                                     AND taxi.concern_role_id =
+                                                                            tax.concern_role_id)),
+                                                          XMLELEMENT (
+                                                             "benefits",
+                                                             (SELECT XMLAGG (
+                                                                        XMLELEMENT (
+                                                                           "benefit",
+                                                                           XMLELEMENT (
+                                                                              "type",
+                                                                              benefit_type),
+                                                                           XMLELEMENT (
+                                                                              "start_date",
+                                                                              benefit_start_date),
+                                                                           XMLELEMENT (
+                                                                              "end_date",
+                                                                              benefit_end_date) --XMLElement("source_case_id", benefit_source_case_id )
+                                                                                               ))
+                                                                FROM temp_tpaxb tpaxb
+                                                               WHERE     tpaxb.integ_case_ref =
+                                                                            tax.integ_case_ref
+                                                                     AND tpaxb.concern_role_id =
+                                                                            tax.concern_role_id)),
+                                                          XMLELEMENT (
+                                                             "deductions",
+                                                             (SELECT XMLAGG (
+                                                                        XMLELEMENT (
+                                                                           "deduction",
+                                                                           XMLELEMENT (
+                                                                              "type",
+                                                                              deduction_type),
+                                                                           XMLELEMENT (
+                                                                              "amount",
+                                                                              Deduction_Amount), /* 20170729, George Gluck, changed "amount" to "AS Deduction_Amount" to fix deduction amount = income amount */
+                                                                           XMLELEMENT (
+                                                                              "frequency",
+                                                                              frequency),
+                                                                           XMLELEMENT (
+                                                                              "start_date",
+                                                                              deduction_start_date),
+                                                                           XMLELEMENT (
+                                                                              "end_date",
+                                                                              deduction_end_date) --XMLElement("source_case_id", deduction_source_case_id )
+                                                                                                 ))
+                                                                FROM temp_tpaxd tpaxd
+                                                               WHERE     tpaxd.integ_case_ref =
+                                                                            tax.integ_case_ref
+                                                                     AND tpaxd.concern_role_id =
+                                                                            tax.concern_role_id)),
+                                                          XMLELEMENT (
+                                                             "address",
+                                                             XMLELEMENT (
+                                                                "address_line_1",
+                                                                address_line_1),
+                                                             XMLELEMENT (
+                                                                "address_line_2",
+                                                                address_line_2),
+                                                             XMLELEMENT (
+                                                                "address_line_3",
+                                                                address_line_3),
+                                                             XMLELEMENT (
+                                                                "city",
+                                                                city),
+                                                             XMLELEMENT (
+                                                                "county",
+                                                                county),
+                                                             XMLELEMENT (
+                                                                "state",
+                                                                state),
+                                                             XMLELEMENT (
+                                                                "postal_code",
+                                                                postal_code)),
+                                                          XMLELEMENT (
+                                                             "email_address",
+                                                             email_address),
+                                                          XMLELEMENT (
+                                                             "telephone_number",
+                                                             XMLELEMENT (
+                                                                "country_code",
+                                                                telephone_country_code),
+                                                             XMLELEMENT (
+                                                                "area_code",
+                                                                telephone_area_code),
+                                                             XMLELEMENT (
+                                                                "number",
+                                                                telephone_number),
+                                                             XMLELEMENT (
+                                                                "number_full",
+                                                                telephone_number_full)),
+                                                          XMLELEMENT (
+                                                             "relationships",
+                                                             (SELECT XMLAGG (
+                                                                        XMLELEMENT (
+                                                                           "relationship",
+                                                                           XMLELEMENT (
+                                                                              "relationship_type",
+                                                                              relationship_type),
+                                                                           XMLELEMENT (
+                                                                              "related_participant_id",
+                                                                              related_participant_id)))
+                                                                FROM temp_taxr taxr
+                                                               WHERE     taxr.integ_case_ref =
+                                                                            tax.integ_case_ref
+                                                                     AND taxr.concern_role_id =
+                                                                            tax.concern_role_id)),
+                                                          (SELECT XMLELEMENT (
+                                                                     "created_at",
+                                                                     CAST (
+                                                                        MIN (
+                                                                           applicant_created_at) AS TIMESTAMP))
+                                                             FROM temp_notice
+                                                            WHERE     integ_case_ref =
+                                                                         tax.integ_case_ref
+                                                                  AND concern_role_id =
+                                                                         tax.concern_role_id),
+                                                          (SELECT XMLELEMENT (
+                                                                     "modified_at",
+                                                                     CAST (
+                                                                        MAX (
+                                                                           applicant_modified_at) AS TIMESTAMP))
+                                                             FROM temp_notice
+                                                            WHERE     integ_case_ref =
+                                                                         tax.integ_case_ref
+                                                                  AND concern_role_id =
+                                                                         tax.concern_role_id)))
+                                               FROM temp_tax tax
+                                              WHERE tax.integ_case_ref =
+                                                       tnr.integ_case_ref)),             
+                                         XMLELEMENT (
+                                            "brokers",
+                                                (SELECT XMLAGG (
+                                                        XMLELEMENT (
+                                                          "broker",
+                                                          XMLELEMENT (
+                                                              "broker_npn",
+                                                               licensenumber),
+                                                          XMLELEMENT (
+                                                              "start_on",
+                                                               start_date)))
+                                                  FROM broker_license)),                                                               
+                                         (SELECT XMLELEMENT (
+                                                    "product_delivery_cases",
+                                                    XMLAGG (
+                                                       XMLELEMENT (
+                                                          "product_delivery_case",
+                                                          XMLELEMENT (
+                                                             "pdc_case_reference",
+                                                             pdc_caseref),
+                                                          XMLELEMENT (
+                                                             "pdc_product_type",
+                                                             producttype),
+                                                          XMLELEMENT (
+                                                             "pdc_product_type_description",
+                                                             product_type_description),
+                                                          XMLELEMENT (
+                                                             "pdc_primary_applicant_name",
+                                                             pdc_primary_name),
+                                                          XMLELEMENT (
+                                                             "pdc_primary_applicant_id",
+                                                             pdc_primary_applicant_id),
+                                                          XMLELEMENT (
+                                                             "pdc_primary_applicant_concern_role_id",
+                                                             pdc_primary_applicant_id),
+                                                          (SELECT XMLELEMENT (
+                                                                     "pdc_applicants",
+                                                                     XMLAGG (
+                                                                        XMLELEMENT (
+                                                                           "pdc_applicant",
+                                                                           XMLELEMENT (
+                                                                              "participant_id",
+                                                                              participant_id),
+                                                                           XMLELEMENT (
+                                                                              "concern_role_id",
+                                                                              concern_role_id),
+                                                                           XMLELEMENT (
+                                                                              "applicant_name",
+                                                                              applicant_name),
+                                                                           XMLELEMENT (
+                                                                              "consent_applicant",
+                                                                              consent_applicant),
+                                                                           XMLELEMENT (
+                                                                              "is_enrolled_for_es_coverage",
+                                                                              is_enrolled_for_es_coverage),
+                                                                           XMLELEMENT (
+                                                                              "is_without_assistance",
+                                                                              is_without_assistance),
+                                                                           XMLELEMENT (
+                                                                              "years_to_renew_coverage",
+                                                                              years_to_renew_coverage),
+                                                                            XMLELEMENT (
+                                                                              "appl_consent_created_on",
+                                                                              appl_consent_created_on),
+                                                                            XMLELEMENT (
+                                                                              "renewal_base_year",
+                                                                              EXTRACT(YEAR FROM renewal_base_year)),
+                                                                           XMLELEMENT (
+                                                                              "financial_assistance",
+                                                                              financial_assistance),
+                                                                           XMLELEMENT (
+                                                                              "ia_eligible",
+                                                                              ia_eligible),
+                                                                           XMLELEMENT (
+                                                                              "medicaid_chip_eligible",
+                                                                              medicaid_chip_eligible),
+                                                                           XMLELEMENT (
+                                                                              "receiving_benefit",
+                                                                              receiving_benefit),
+                                                                           XMLELEMENT (
+                                                                              "projected_amount",
+                                                                              projected_amount),
+                                                                           XMLELEMENT (
+                                                                              "participant_projected_income",
+                                                                              participant_projected_income),
+                                                                           XMLELEMENT (
+                                                                              "projected_income_start_date",
+                                                                              projected_income_start_date),
+                                                                           XMLELEMENT (
+                                                                              "projected_income_end_date",
+                                                                              projected_income_end_date),
+                                                                           XMLELEMENT (
+                                                                              "application_submission_date",
+                                                                              application_submission_date))))
+                                                             FROM temp_tpax tpax
+                                                            WHERE     tpax.integ_case_ref =
+                                                                         res.integ_case_ref
+                                                                  AND tpax.producttype =
+                                                                         res.producttype
+                                                                  AND tpax.pdc_caseref =
+                                                                         res.pdc_caseref),
+                                                          XMLELEMENT (
+                                                             "pdc_status_code",
+                                                             pdc_status_code),
+                                                          XMLELEMENT (
+                                                             "pdc_registration_date",
+                                                             pdc_registration_date),
+                                                          (SELECT XMLELEMENT (
+                                                                     "created_at",
+                                                                     CAST (
+                                                                        MIN (
+                                                                           pdc_created_at) AS TIMESTAMP))
+                                                             FROM temp_notice
+                                                            WHERE     integ_case_ref =
+                                                                         res.integ_case_ref
+                                                                  AND pdc_caseref =
+                                                                         res.pdc_caseref
+                                                                  AND producttype =
+                                                                         res.producttype),
+                                                          (SELECT XMLELEMENT (
+                                                                     "modified_at",
+                                                                     CAST (
+                                                                        MAX (
+                                                                           pdc_modified_at) AS TIMESTAMP))
+                                                             FROM temp_notice
+                                                            WHERE     integ_case_ref =
+                                                                         res.integ_case_ref
+                                                                  AND pdc_caseref =
+                                                                         res.pdc_caseref
+                                                                  AND producttype =
+                                                                         res.producttype))))
+                                            FROM temp_res res
+                                           WHERE res.integ_case_ref =
+                                                    tnr.integ_case_ref),
+                                         XMLELEMENT (
+                                            "created_at",
+                                            CAST (
+                                               integ_case_created_at AS TIMESTAMP)),
+                                         XMLELEMENT (
+                                            "modified_at",
+                                            CAST (
+                                               integ_case_modified_at AS TIMESTAMP))))
+                              FROM (SELECT DISTINCT
+                                           integ_case_ref,
+                                           application_submission_date,
+                                           application_reference, -- 20170125, George Gluck, added AppRef to output (20170224, George Gluck, Tag now AppCaseRef)
+                                           integ_case_created_at,
+                                           integ_case_modified_at
+                                      FROM temp_notice) tnr)),
+                        VERSION '1.0',
+                        STANDALONE YES))   -- ,version "1.0", standalone yes))
+             AS integrated_cases
+             INTO o_integratedcase
+     FROM DUAL;
+     END;
