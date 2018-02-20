@@ -1,5 +1,5 @@
 create or replace 
-PROCEDURE get_integrated_case_by_caseref (
+PROCEDURE                  get_integrated_case_by_caseref (
       i_caseref          IN     caseheader.casereference%TYPE,
    o_integratedcase      OUT CLOB)
 IS
@@ -995,7 +995,26 @@ INNER JOIN (SELECT * FROM DYNAMICEVIDENCEDATAATTRIBUTE WHERE evidenceid IN (SELE
                       AS Benefit_End_Date,
                    resultset3.FA AS Financial_Assistance,
                    resultset3.IAE AS IA_Eligible, /* 20170626 - George Gluck - Fix to undo ia_eligible always 'true' */
-                   resultset3.MED AS Medicaid_CHIP_Eligible,
+                   /*(SELECT --chic.caseid  
+                     'true'  AS IA_Eligible
+                      FROM CASEHEADER CHIC
+                         JOIN CASERELATIONSHIP CR ON CR.RELATEDCASEID = CHIC.CASEID
+                         JOIN PRODUCTDELIVERY PD ON PD.CASEID = CR.CASEID AND PD.PRODUCTTYPE = 'PT26304'
+                        JOIN CASEDECISION CD ON CD.CASEID = PD.CASEID AND CD.STATUSCODE='CDS1' AND CD.RESULTCODE='CDR1'  and CD.DECISIONTODATE > '01-JAN-18'
+
+                          JOIN CASEGROUPS CG ON PD.CASEID = CG.CASEID AND CG.GROUPCODE='CG1' AND CG.ENDDATE > '01-JAN-18' where CG.CONCERNROLEID =resultset3.CONCERN_ROLE_ID
+                 ) as IA_Eligible
+                     ,*/
+                     resultset3.MED AS Medicaid_CHIP_Eligible,
+ 
+                                /*(select 'true' from CASEHEADER CHIC
+                                           JOIN CASERELATIONSHIP CR ON CR.RELATEDCASEID = CHIC.CASEID
+                                           JOIN PRODUCTDELIVERY PD ON PD.CASEID = CR.CASEID AND PD.PRODUCTTYPE = 'PT26301'
+                                            JOIN CASEDECISION CD ON CD.CASEID = PD.CASEID AND CD.STATUSCODE='CDS1' AND CD.RESULTCODE='CDR1'  and CD.DECISIONTODATE > '01-JAN-18'
+                                           JOIN CASEGROUPS CG ON PD.CASEID = CG.CASEID AND CG.GROUPCODE='CG1' AND CG.ENDDATE > '01-JAN-18' where CG.CONCERNROLEID=
+                                           resultset3.CONCERN_ROLE_ID) AS Medicaid_CHIP_Eligible,*/
+
+
                    (SELECT description
                       FROM codetableitem
                      WHERE     code = resultset3.BEN
@@ -1023,9 +1042,14 @@ INNER JOIN (SELECT * FROM DYNAMICEVIDENCEDATAATTRIBUTE WHERE evidenceid IN (SELE
 ----                   (SELECT CASEREFERENCE FROM CASEHEADER CHAP WHERE CHAP.CONCERNROLEID = (SELECT CONCERNROLEID FROM CASEHEADER WHERE CASEREFERENCE = i_caseref) 
 ----                                                              AND CHAP.CASETYPECODE = 'CT10201') AS application_reference  -- 20170712, George Gluck, return to AppCaseRef to output
 /* 20170713, George Gluck - Fix to avoid multiple applications returned, when only one is required */
-      (SELECT APC.APPLICATIONREFERENCE FROM APPLICATIONCASE APC, CASEHEADER CH
-        WHERE CH.CASETYPECODE = 'CT10201' AND CH.CONCERNROLEID = (SELECT CONCERNROLEID FROM CASEHEADER WHERE CASEREFERENCE = i_caseref) AND APC.STATUS <> 'ACS27002' AND APC.APPLICATIONCASEID = CH.CASEID /* 20171029 - No Closed apllications */
-          AND TO_CHAR(APC.SUBMITTEDDATETIME, 'YYYYMMDD') = (SELECT TO_CHAR(REGISTRATIONDATE, 'YYYYMMDD') FROM CASEHEADER WHERE CASEREFERENCE = i_caseref)) AS application_reference
+      /*(SELECT APC.APPLICATIONREFERENCE FROM APPLICATIONCASE APC, CASEHEADER CH
+        WHERE CH.CASETYPECODE = 'CT10201' AND CH.CONCERNROLEID = (SELECT CONCERNROLEID FROM CASEHEADER WHERE CASEREFERENCE = i_caseref) AND APC.APPLICATIONCASEID = CH.CASEID 
+          AND TO_CHAR(APC.SUBMITTEDDATETIME, 'YYYYMMDD') = (SELECT TO_CHAR(REGISTRATIONDATE, 'YYYYMMDD') FROM CASEHEADER WHERE CASEREFERENCE = i_caseref)) AS application_reference*/
+/* 20170131, Mamatha Burujukati - Latest Fix to return valid application reference */
+         (SELECT APC.APPLICATIONREFERENCE FROM APPLICATIONCASE APC, CASEHEADER CH
+       WHERE CH.CASETYPECODE = 'CT10201' AND CH.CASEID = (SELECT CR.CASEID FROM CASERELATIONSHIP CR, CASEHEADER CH1 WHERE CH1.CASEREFERENCE = i_caseref and CH1.CASEID = CR.RELATEDCASEID and CR.TYPECODE='CT19' and CR.STATUSCODE='RST1')
+       AND APC.APPLICATIONCASEID = CH.CASEID
+         AND TO_CHAR(APC.SUBMITTEDDATETIME, 'YYYYMMDD') = (SELECT TO_CHAR(REGISTRATIONDATE, 'YYYYMMDD') FROM CASEHEADER WHERE CASEREFERENCE = i_caseref)) AS application_reference
               FROM caseheader INTEG,
                    caseheader PDC,
                    PRODUCTDELIVERY PD,
@@ -1047,7 +1071,7 @@ INNER JOIN (SELECT * FROM DYNAMICEVIDENCEDATAATTRIBUTE WHERE evidenceid IN (SELE
                    resultset3
              WHERE     PDC.CASEID = PD.CASEID
                    --AND PD.PRODUCTTYPE in ('PT26304', 'PT26305', 'PT26301')
-                   AND PDC.STATUSCODE <> 'CS3'         -- changed from = 'CS1' /* 20170619, George Gluck, open up ALL PDCs to match script that corrects the all-PDCs-for-all-participants problem; 20171030, removed comment */ 
+--                   AND PDC.STATUSCODE <> 'CS3'         -- changed from = 'CS1' /* 20170619, George Gluck, open up ALL PDCs to match script that corrects the all-PDCs-for-all-participants problem */
                    AND ProductTypeCT.CODE = PD.PRODUCTTYPE
                    AND CROLE.CONCERNROLEID = PDC.CONCERNROLEID
                    AND INTEG.CASEID = PDC.INTEGRATEDCASEID
@@ -1272,9 +1296,10 @@ INNER JOIN (SELECT * FROM DYNAMICEVIDENCEDATAATTRIBUTE WHERE evidenceid IN (SELE
                    DISTINCT
                    p.personid AS person_id,
                    p.concernroleid AS concern_role_id,
-                   x.dcas_01 AS hbx_person_id
-              FROM dchxpersonmapping p, DCASLCLUAT_SOAINFRA.xref_subscriber x
-             WHERE p.personid = x.crm_01),
+      /*x.dcas_01*/p.personid AS hbx_person_id
+              FROM dchxpersonmapping p
+              /*, xref_subscriber x
+             WHERE p.personid = x.crm_01*/),
         partid
         AS (SELECT 
                    DISTINCT participant_id, concern_role_id
@@ -1672,12 +1697,12 @@ INNER JOIN (SELECT * FROM DYNAMICEVIDENCEDATAATTRIBUTE WHERE evidenceid IN (SELE
                                                                            XMLELEMENT (
                                                                               "financial_assistance",
                                                                               financial_assistance),
-                                                                           XMLELEMENT (
+                                                                         XMLELEMENT (
                                                                               "ia_eligible",
-                                                                              ia_eligible),
+                                                                                 nvl2(ia_eligible,ia_eligible,'false')),
                                                                            XMLELEMENT (
                                                                               "medicaid_chip_eligible",
-                                                                              medicaid_chip_eligible),
+                                                                                nvl2(medicaid_chip_eligible,medicaid_chip_eligible,'false')),
                                                                            XMLELEMENT (
                                                                               "receiving_benefit",
                                                                               receiving_benefit),

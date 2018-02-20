@@ -1,275 +1,42 @@
 create or replace 
-PROCEDURE CAL_body (
-   i_first_name           IN /* schemaname */ ALTERNATENAME.FIRSTFORENAME%TYPE,
-   i_last_name            IN /* schemaname */ ALTERNATENAME.SURNAME%TYPE,
-   i_date_of_birth        IN /* schemaname */ CHAR,--PERSON.DATEOFBIRTH%TYPE,
-   i_ssn                  IN /* schemaname */ CONCERNROLEALTERNATEID.ALTERNATEID%TYPE DEFAULT '',
-   i_concernroleid        IN /* schemaname */ CONCERNROLEALTERNATEID.CONCERNROLEID%TYPE DEFAULT NULL,
-   o_response_code        OUT STRING,
-   o_response_text        OUT STRING,
-   o_user_details_CLOB    OUT CLOB  
-   )
+PROCEDURE AppRefNum_Given_ICID
+(
+ i_caseref             IN CASEHEADER.CASEREFERENCE%TYPE,  
+ i_debug_print         IN INTEGER DEFAULT 0, /* 0 ==> don't print, 1 ==> print */
+ i_add_header          IN INTEGER DEFAULT 1, /* 0 ==> no header, 1 ==> add header */
+ i_output_format       IN INTEGER DEFAULT 1, /* 1 ==> XML, 2 ==> pipe-delimited */
+ o_response_code       OUT VARCHAR2,
+ o_response_text       OUT VARCHAR2,
+ o_output              OUT CLOB
+)
 IS
 BEGIN
 DECLARE
-  debug_print             INTEGER DEFAULT 0; -- level of debug printing
-  one_line_CLOB           BOOLEAN DEFAULT TRUE; /* 20170815, George Gluck, Added BOOLEAN for One_line_CLOB */
-  motivationType_IA_Only  BOOLEAN DEFAULT TRUE; /* Motivation Types: 
-MT26301	Insurance Affordability  (*)
-MT26302	Employer Sponsored Insurance
-MT26303	Exemptions
-MT26304	Unassisted Insurance
-MT26305	Special Enrollment
-MT26306	Employee Change in Circumstances
-MT45000	Renewal Form - Assisted
-MT45010	Presumptive Medicaid
-MT45050	CoCLifeEventFindAssistance
-MT45051	CoCLifeEventQuickShopping
-MT45052	CoCLifeEventESI                                             */
-  type tabsarray IS VARRAY(5) OF VARCHAR2(10);
-  tabs                    tabsarray;
-  crlf                    VARCHAR2(2) := chr(13)||chr(10);
-  i                       INTEGER;
-  l_first_name     /* schemaname */ ALTERNATENAME.FIRSTFORENAME%TYPE;
-  l_last_name      /* schemaname */ ALTERNATENAME.SURNAME%TYPE;
-  l_date_of_birth  /* schemaname */ PERSON.DATEOFBIRTH%TYPE;
-  l_ssn            /* schemaname */ CONCERNROLEALTERNATEID.ALTERNATEID%TYPE;
-  l_IC             /* schemaname */ CASEHEADER.CASEREFERENCE%TYPE;
-  l_CASEID         /* schemaname */ CASEHEADER.CASEID%TYPE;
-  l_concernroleid  /* schemaname */ CONCERNROLEALTERNATEID.CONCERNROLEID%TYPE;
-  l_AppCaseRef     /* schemaname */ APPLICATIONCASE.APPLICATIONREFERENCE%TYPE;
-  l_CREATEDON      /* schemaname */ CASEHEADER.CREATEDON%TYPE;
-  l_createDate        /* schemaname */ CASEHEADER.CREATEDON%TYPE;
-  l_motivationTYpe /* schemaname */ DYNAMICEVIDENCEDATAATTRIBUTE.VALUE%TYPE;
-  CURSOR Curam_CASEHEADER_Lookup_cur IS /* ALL Motivations */ /* 20170815, George Gluck, Change CASEHEADER query to catch all/any ICs "person" is associated with */
-     SELECT DISTINCT CASEHEADER.CASEREFERENCE, CASEHEADER.REGISTRATIONDATE, CASEHEADER.CASEID FROM CASEHEADER, EVIDENCEDESCRIPTOR /* 20170815, George Gluck, Since CREATEDON can be NULL, use REGISTRATIONDATE */
-      WHERE CASEHEADER.CASEID IN (SELECT CASEID FROM CASEPARTICIPANTROLE WHERE PARTICIPANTROLEID = l_concernroleid) AND CASEHEADER.CASETYPECODE = 'CT5' AND CASEHEADER.STATUSCODE = 'CS4'  /* CS4: OPEN IC ; CS1: ACTIVE IC */ 
-      AND EVIDENCEDESCRIPTOR.CASEID = CASEHEADER.CASEID AND EVIDENCEDESCRIPTOR.EVIDENCETYPE = 'DET0026055';
-  CURSOR Curam_CONCERNROLEID_Lookup_cur IS 
-      SELECT ALTERNATENAME.CONCERNROLEID FROM ALTERNATENAME WHERE UPPER(ALTERNATENAME.FIRSTFORENAME) = UPPER(i_first_name) AND UPPER(ALTERNATENAME.SURNAME) = UPPER(i_last_name);
-  numberOfUsers   INTEGER;
-  usersIDArray dbms_sql.number_table;
-  usersICArray dbms_sql.varchar2_table;
-  usersAppCaseRefArray dbms_sql.varchar2_table;
-  usersAppCaseCREATEDONArray dbms_sql.varchar2_table;
-  usersMotivationTypeArray dbms_sql.varchar2_table;
-  type 	user_details  is record(user_id  CONCERNROLEALTERNATEID.CONCERNROLEID%TYPE, integrated_case_id CASEHEADER.CASEREFERENCE%TYPE);
-  type  user_details_array is table of user_details;
-  o_user_details_array user_details_array := user_details_array();
-BEGIN /* Execution */
---  one_line_CLOB := FALSE;
---  debug_print := 1;
-  IF debug_print > 0 THEN 
-    dbms_output.put_line('DEBUG:i_first_name='||i_first_name);
-    dbms_output.put_line('DEBUG:i_last_name='||i_last_name);
-    dbms_output.put_line('DEBUG:i_date_of_birth='||i_date_of_birth); /* USING HAVEN format */
-    dbms_output.put_line('DEBUG:i_ssn='||i_ssn);
-  END IF;
-  motivationType_IA_Only := FALSE;
-  tabs := tabsarray('','','','','');
-  tabs(1) := chr(11) || chr(11); -- initialize tabs array
-  IF One_line_CLOB THEN/* 20170815, George Gluck, Added BOOLEAN for One_line_CLOB */
-    crlf := '';
-    tabs(1) := '';
-  END IF;
-  FOR i IN 2..5
-  LOOP
-    tabs(i) := tabs(i - 1) || tabs(1);
-  END LOOP;
-  IF i_first_name IS NULL THEN l_first_name := '%'; ELSE l_first_name := i_first_name; END IF;
-  IF i_last_name IS NULL THEN l_last_name := '%'; ELSE l_last_name := i_last_name; END IF;
-  IF i_ssn IS NULL THEN l_ssn := '%'; ELSE l_ssn := i_ssn; END IF;
-  IF debug_print > 0 THEN 
-    dbms_output.put_line('DEBUG:l_first_name='||l_first_name);
-    dbms_output.put_line('DEBUG:l_last_name='||l_last_name);
-    dbms_output.put_line('DEBUG:l_date_of_birth='||i_date_of_birth); /* USING HAVEN format */
-    dbms_output.put_line('DEBUG:l_ssn='||l_ssn);
-  END IF;
-  numberOfUsers := 0;
-  o_user_details_CLOB := '';
-  usersIDArray(1) := NULL; /* If no records found, output NULLs for only XML entry */
-  usersICArray(1) := NULL;
-  usersAppCaseRefArray(1) := NULL;
-  usersAppCaseCREATEDONArray(1) := NULL;
-  usersMotivationTypeArray(1) := NULL;
-/* Start with search by first and last name */
-  OPEN Curam_CONCERNROLEID_Lookup_cur;
-  LOOP
-    FETCH Curam_CONCERNROLEID_Lookup_cur INTO l_concernroleid;
-    EXIT WHEN Curam_CONCERNROLEID_Lookup_cur%NOTFOUND;
-IF debug_print > 0 THEN dbms_output.put_line('DEBUGDOB: SELECT ALTERNATENAME.CONCERNROLEID='||l_concernroleid); END IF;
-    IF i_date_of_birth IS NOT NULL THEN /* USE DOB */
-IF debug_print > 0 THEN dbms_output.put_line('DEBUGDOB: Before Exists'); END IF;
-      for x in ( select count(*) cnt 
-        from dual 
-        where exists (select NULL from PERSON where PERSON.CONCERNROLEID = l_concernroleid AND TO_CHAR(PERSON.DATEOFBIRTH, 'YYYYMMDD') = i_date_of_birth))  /* For HAVEN format */
-        LOOP 
-          IF (x.cnt = 1) 
-          THEN 
-IF debug_print > 0 THEN dbms_output.put_line('DEBUGDOB: x.cnt = 1'); END IF;
-            EXIT; /* Use this CONCERNROLEID */ 
-          ELSE 
-IF debug_print > 0 THEN dbms_output.put_line('DEBUGDOB: x.cnt = '||x.cnt); END IF;
-            l_concernroleid := i_concernroleid; 
-            GOTO not_this_CONCERNROLEID; /* Don't use this CONCERNROLEID */
-          END IF; 
-        END LOOP;
-    END IF;
-IF debug_print > 0 THEN dbms_output.put_line('DEBUGDOB: After Exists'); END IF;
-    IF i_ssn IS NOT NULL THEN /* USE SSN */
-IF debug_print > 0 THEN dbms_output.put_line('DEBUGSSN: Before Exists'); END IF;
-      for x in ( select count(*) cnt 
-        from dual 
-        WHERE EXISTS (SELECT NULL FROM CONCERNROLEALTERNATEID WHERE CONCERNROLEALTERNATEID.TYPECODE='CA1' AND CONCERNROLEALTERNATEID.STATUSCODE = 'RST1' AND CONCERNROLEALTERNATEID.CONCERNROLEID = l_concernroleid AND 
-                        (CONCERNROLEALTERNATEID.ALTERNATEID IS NULL OR CONCERNROLEALTERNATEID.ALTERNATEID = TO_CHAR(l_ssn))
-                      )
-                ) 
-        LOOP 
-          IF (x.cnt = 1) 
-          THEN 
-IF debug_print > 0 THEN dbms_output.put_line('DEBUGSSN: x.cnt = 1'); END IF;
-            EXIT; /* Use this CONCERNROLEID */ 
-          ELSE 
-IF debug_print > 0 THEN dbms_output.put_line('DEBUGSSN: x.cnt = '||x.cnt); END IF;
-            GOTO not_this_CONCERNROLEID; /* Don't use this CONCERNROLEID */
-          END IF; 
-        END LOOP;
-    END IF;
-IF debug_print > 0 THEN dbms_output.put_line('DEBUGSSN: After Exists'); END IF;
-    OPEN Curam_CASEHEADER_Lookup_cur;
-    LOOP
-      FETCH Curam_CASEHEADER_Lookup_cur INTO l_IC, l_CREATEDON, l_CASEID;
-      EXIT WHEN Curam_CASEHEADER_Lookup_cur%NOTFOUND ;
-IF debug_print > 0 THEN dbms_output.put_line('DEBUGIC: l_IC, l_CREATEDON, l_CASEID='||l_IC||'/'||l_CREATEDON||'/'||l_CASEID); END IF;
-      IF motivationType_IA_Only THEN /* USE motivationType IA only */
-        for x in ( select count(*) cnt 
-          from dual 
-          WHERE EXISTS (SELECT DISTINCT VALUE FROM DYNAMICEVIDENCEDATAATTRIBUTE WHERE DYNAMICEVIDENCEDATAATTRIBUTE.NAME = 'motivationType' AND DYNAMICEVIDENCEDATAATTRIBUTE.VALUE = 'MT26301' AND 
-                        DYNAMICEVIDENCEDATAATTRIBUTE.EVIDENCEID IN (SELECT RELATEDID FROM EVIDENCEDESCRIPTOR WHERE EVIDENCETYPE = 'DET0026055' AND CASEID = l_CASEID)))
-          loop 
-            if (x.cnt = 1) 
-            then
-              EXIT; /* Use this CONCERNROLEID */ 
-            else 
-              GOTO not_this_IC; /* Don't use this IC */
-            end if; 
-          end loop;
-      END IF; /* motivationType_IA_Only */
-/* SKIP for now l_motivationType must = 'MT26301' (IA)    SELECT DISTINCT VALUE INTO l_motivationType FROM DYNAMICEVIDENCEDATAATTRIBUTE WHERE DYNAMICEVIDENCEDATAATTRIBUTE.NAME = 'motivationType' AND 
-                        DYNAMICEVIDENCEDATAATTRIBUTE.EVIDENCEID IN (SELECT RELATEDID FROM EVIDENCEDESCRIPTOR WHERE EVIDENCETYPE = 'DET0026055' AND CASEID = l_CASEID); */
-      l_motivationType := 'MT26301'; /* 20170815, George Gluck, for now l_motivationType must = 'MT26301' (IA) */
-      numberOfUsers := numberOfUsers + 1;
-      usersIDArray(numberOfUsers) := l_concernroleid;
-      usersICArray(numberOfUsers) := l_IC;
-      usersMotivationTypeArray(numberOfUsers) := l_motivationType;
-IF debug_print > 0 THEN dbms_output.put_line('DEBUG:usersIDArray('||numberOfUsers||')='||usersIDArray(numberOfUsers)); END IF;
-IF debug_print > 0 THEN dbms_output.put_line('DEBUG:usersICArray('||numberOfUsers||')='||usersICArray(numberOfUsers)); END IF;
-/* 20170815, George Gluck, Added code to handle AppDate better */
---      SELECT  MAX(APPLICATIONDATE) INTO  l_createDate FROM APPLICATIONCASE WHERE APPLICATIONCASEID IN (SELECT CASEID FROM CASEHEADER WHERE CASEREFERENCE IN (SELECT CASEREFERENCE FROM CASEHEADER WHERE CONCERNROLEID IN 
---              (SELECT CONCERNROLEID FROM CASEHEADER WHERE CASEREFERENCE = l_IC))) AND APPLICATIONDATE <= l_CREATEDON;
-      SELECT DISTINCT APPLICATIONREFERENCE, SUBMITTEDDATETIME INTO l_AppCaseRef, l_createDate FROM APPLICATIONCASE AC, CASEHEADER CH1, CASEHEADER CH2 WHERE /* CH1 ==> AP, CH2 ==> IC */
-              CH2.CASEID = l_CASEID AND CH1.CONCERNROLEID = l_concernroleid AND 
-              AC.APPLICATIONCASEID = CH1.CASEID AND TO_CHAR(CH1.REGISTRATIONDATE, 'YYYYMMDD') = TO_CHAR(AC.SUBMITTEDDATETIME, 'YYYYMMDD') AND CH1.STATUSCODE = 'CS3' AND
-              CH2.REGISTRATIONDATE = CH1.REGISTRATIONDATE AND CH2.CASETYPECODE = 'CT5' AND CH2.STATUSCODE = 'CS4'; 
-      
-/*      SELECT DISTINCT APPLICATIONREFERENCE INTO l_AppCaseRef FROM APPLICATIONCASE WHERE 
-          APPLICATIONCASEID IN (SELECT CASEID FROM CASEHEADER WHERE CASEREFERENCE IN (SELECT CASEREFERENCE FROM CASEHEADER WHERE CONCERNROLEID IN 
-              (SELECT CONCERNROLEID FROM CASEHEADER WHERE CASEREFERENCE = l_IC)))
-              AND APPLICATIONDATE = l_createDate; /* USE Date just before IC Registration date */              
-/*      SELECT DISTINCT APPLICATIONREFERENCE INTO l_AppCaseRef FROM APPLICATIONCASE WHERE 
-          APPLICATIONCASEID = l_CASEID AND APPLICATIONDATE = l_createDate; /* USE Date just before IC Registration date */              
-      usersAppCaseRefArray(numberOfUsers) := l_AppCaseRef;
-      usersAppCaseCREATEDONArray(numberOfUsers) := TO_CHAR(l_createDate, 'DD-MON-YYYY');
-IF debug_print > 0 THEN dbms_output.put_line('DEBUG:usersAppCaseRefArray('||numberOfUsers||')='||usersAppCaseRefArray(numberOfUsers)); END IF;
-IF debug_print > 0 THEN dbms_output.put_line('DEBUG:usersAppCaseCREATEDONArray('||numberOfUsers||')='||usersAppCaseCREATEDONArray(numberOfUsers)); END IF;    
-IF debug_print > 0 THEN dbms_output.put_line('DEBUG:CASE:l_first_name/l_last_name/i_date_of_birth/l_ssn='||l_first_name||'/'||l_last_name||'/'||i_date_of_birth||'/'||l_ssn); END IF;    
-      CASE 
-         WHEN numberOfUsers = 1 THEN o_response_code := 'SINGLE_USER'; o_response_text := 'Single User: ' || l_first_name || ' ' || l_last_name || ' ' || i_date_of_birth || ' ' || l_ssn;
-         WHEN numberOfUsers = 0 THEN 
-            o_response_code := 'NO_DATA_FOUND'; 
-            o_response_text := 'No data found for: ' || l_first_name || ' ' || l_last_name || ' ' || i_date_of_birth || ' ' || l_ssn;
-            usersIDArray(1) := i_concernroleid;
-         WHEN numberOfUsers > 1 THEN o_response_code := 'MULTIPLE_USERS';  o_response_text := 'Number of Users: '|| TO_CHAR(numberOfUsers) || ' for: ' || l_first_name || ' ' || l_last_name || ' ' || i_date_of_birth || ' ' || l_ssn;
-         ELSE o_response_code := 'ERROR'; o_response_code := 'Error : ' || sqlerrm;
-      END CASE;
-      o_user_details_CLOB := '<?xml version="1.0" standalone="yes"?>' || crlf || '<users_ID_IC_info xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">' || crlf || -- start output with XML "header"
-        tabs(1) || '<user_ID_IC_info>' || crlf || tabs(2) || '<user_CONCERNROLEID>' || usersIDArray(1) || '</user_CONCERNROLEID>' || crlf || tabs(2) || '<user_SSN>' || l_ssn ||  '</user_SSN>' || crlf ||
-        tabs(2) || '<user_FirstName>' || l_first_name || '</user_FirstName>' || crlf || tabs(2) || '<user_LastName>' || l_last_name || '</user_LastName>' || crlf || 
-        tabs(2) || '<user_DOB>' || i_date_of_birth || '</user_DOB>' || crlf || tabs(2) || '<user_IC>' || usersICArray(1) || '</user_IC>' || crlf || 
-        tabs(2) || '<AppCaseRef>' || usersAppCaseRefArray(1) || '</AppCaseRef>' || crlf || tabs(2) || '<AppCreatedOn>' || usersAppCaseCREATEDONArray(1) || '</AppCreatedOn>' ||  crlf || 
-        tabs(2) || '<motivationType>' || usersMotivationTypeArray(1) || '</motivationType>';
-      FOR i IN 2..numberOfUsers
-      LOOP
-        o_user_details_CLOB := o_user_details_CLOB || crlf || -- output without XML "header"
-          tabs(1) || '<user_ID_IC_info>' || crlf || tabs(2) || '<user_CONCERNROLEID>' || usersIDArray(1) || '</user_CONCERNROLEID>' || crlf || tabs(2) || '<user_SSN>' || l_ssn ||  '</user_SSN>' || crlf ||
-          tabs(2) || '<user_FirstName>' || l_first_name || '</user_FirstName>' || crlf || tabs(2) || '<user_LastName>' || l_last_name || '</user_LastName>' || crlf || 
-          tabs(2) || '<user_DOB>' || i_date_of_birth || '</user_DOB>' || crlf || tabs(2) || '<user_IC>' || usersICArray(i) || '</user_IC>' || crlf || 
-          tabs(2) || '<AppCaseRef>' || usersAppCaseRefArray(i) || '</AppCaseRef>' || crlf || tabs(2) || '<AppCreatedOn>' || usersAppCaseCREATEDONArray(i) || '</AppCreatedOn>' ||  crlf || 
-          tabs(2) || '<motivationType>' || usersMotivationTypeArray(i) || '</motivationType>' || crlf || tabs(1) || '</user_ID_IC_info>';
-      END LOOP; /* FOR i IN 2..numberOfUsers */
-      o_user_details_CLOB := o_user_details_CLOB || crlf || '</users_ID_IC_info>';
-IF debug_print > 0 THEN dbms_output.put_line('DEBUGICloop: o_user_details_CLOB='||o_user_details_CLOB); END IF;    
-<<not_this_IC>>
-IF debug_print > 0 THEN dbms_output.put_line('DEBUG: Reached <<not_this_IC>>'); END IF;    
-    END LOOP; /* Curam_CASEHEADER_Lookup_cur */
-<<not_this_CONCERNROLEID>>
-IF debug_print > 0 THEN dbms_output.put_line('DEBUG: Reached CLOSE Curam_CASEHEADER_Lookup_cur'); END IF;
-    IF (Curam_CASEHEADER_Lookup_cur%ISOPEN) THEN CLOSE Curam_CASEHEADER_Lookup_cur; END IF;
-  END LOOP; /* Curam_CONCERNROLEID_Lookup_cur */
-IF debug_print > 0 THEN dbms_output.put_line('DEBUG: Reached CLOSE Curam_CONCERNROLEID_Lookup_cur'); END IF;    
-  CLOSE Curam_CONCERNROLEID_Lookup_cur;
-IF debug_print > 0 THEN dbms_output.put_line('DEBUG: Reached CASE numberOfUsers='||numberOfUsers); END IF;    
-  CASE 
-     WHEN numberOfUsers = 1 THEN o_response_code := 'SINGLE_USER'; o_response_text := 'Single User: ' || l_first_name || ' ' || l_last_name || ' ' || i_date_of_birth || ' ' || l_ssn;
-     WHEN numberOfUsers = 0 THEN 
-      o_response_code := 'NO_DATA_FOUND'; 
-      o_response_text := 'No data found for: ' || l_first_name || ' ' || l_last_name || ' ' || i_date_of_birth || ' ' || l_ssn;
-      usersIDArray(1) := i_concernroleid; /* Use input concernroleid */
-IF debug_print > 0 THEN dbms_output.put_line('DEBUG: Reached CASE numberOfUsers= 0!'); END IF;
-     WHEN numberOfUsers > 1 THEN o_response_code := 'MULTIPLE_USERS';  o_response_text := 'Number of Users: '|| TO_CHAR(numberOfUsers) || ' for: ' || l_first_name || ' ' || l_last_name || ' ' || i_date_of_birth || ' ' || l_ssn;
-     ELSE o_response_code := 'ERROR'; o_response_code := 'Error : ' || sqlerrm;
-  END CASE;
-IF debug_print > 0 THEN dbms_output.put_line('DEBUG: Reached END CASE'); END IF;
-  o_user_details_CLOB := '<?xml version="1.0" standalone="yes"?>' || crlf || '<users_ID_IC_info xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">' || crlf || -- start output with XML "header"
-    tabs(1) || '<user_ID_IC_info>' || crlf || tabs(2) || '<user_CONCERNROLEID>' || usersIDArray(1) || '</user_CONCERNROLEID>' || crlf || tabs(2) || '<user_SSN>' || l_ssn ||  '</user_SSN>' || crlf ||
-    tabs(2) || '<user_FirstName>' || l_first_name || '</user_FirstName>' || crlf || tabs(2) || '<user_LastName>' || l_last_name || '</user_LastName>' || crlf || 
-    tabs(2) || '<user_DOB>' || i_date_of_birth || '</user_DOB>' || crlf || tabs(2) || '<user_IC>' || usersICArray(1) || '</user_IC>' || crlf || 
-    tabs(2) || '<AppCaseRef>' || usersAppCaseRefArray(1) || '</AppCaseRef>' || crlf || tabs(2) || '<AppCreatedOn>' || usersAppCaseCREATEDONArray(1) || '</AppCreatedOn>' ||  crlf || 
-    tabs(2) || '<motivationType>' || usersMotivationTypeArray(1) || '</motivationType>' || crlf || tabs(1) || '</user_ID_IC_info>';
-IF debug_print > 0 THEN dbms_output.put_line('DEBUG: Reached o_user_details_CLOB loop'); END IF;    
-  FOR i IN 2..numberOfUsers
-  LOOP
-    o_user_details_CLOB := o_user_details_CLOB || crlf || -- output without XML "header"
-      tabs(1) || '<user_ID_IC_info>' || crlf || tabs(2) || '<user_CONCERNROLEID>' || usersIDArray(1) || '</user_CONCERNROLEID>' || crlf || tabs(2) || '<user_SSN>' || l_ssn ||  '</user_SSN>' || crlf ||
-      tabs(2) || '<user_FirstName>' || l_first_name || '</user_FirstName>' || crlf || tabs(2) || '<user_LastName>' || l_last_name || '</user_LastName>' || crlf || 
-      tabs(2) || '<user_DOB>' || i_date_of_birth || '</user_DOB>' || crlf || tabs(2) || '<user_IC>' || usersICArray(i) || '</user_IC>' || crlf || 
-      tabs(2) || '<AppCaseRef>' || usersAppCaseRefArray(i) || '</AppCaseRef>' || crlf || tabs(2) || '<AppCreatedOn>' || usersAppCaseCREATEDONArray(i) || '</AppCreatedOn>' ||  crlf || 
-      tabs(2) || '<motivationType>' || usersMotivationTypeArray(i) || '</motivationType>' || crlf || tabs(1) || '</user_ID_IC_info>';
-  END LOOP; /* FOR i IN 2..numberOfUsers */
-  o_user_details_CLOB := o_user_details_CLOB || crlf || '</users_ID_IC_info>';
-IF debug_print > 0 THEN dbms_output.put_line('DEBUGCRloop: o_user_details_CLOB='||o_user_details_CLOB); END IF;    
-  RETURN;
-  EXCEPTION
+ l_apprefnum           APPLICATIONCASE.APPLICATIONREFERENCE%TYPE;
+ BEGIN   
+IF i_debug_print > 0 THEN dbms_output.put_line('START - params: i_caseref='||i_caseref||' i_debug_print='||i_debug_print||' i_add_header='||i_add_header||' i_output_format='||i_output_format); END IF;
+   o_response_code := 'success';
+   o_response_text := 'AppCaseRef for IC: ' || i_caseref || ' found: ';
+   o_output := '';
+   SELECT APPLICATIONREFERENCE
+   INTO l_apprefnum
+   FROM APPLICATIONCASE AC
+   JOIN CASEHEADER CH ON AC.APPLICATIONCASEID = CH.CASEID AND CH.CASETYPECODE = 'CT10201'
+   AND CH.CONCERNROLEID = (SELECT CONCERNROLEID FROM CASEHEADER WHERE CASEREFERENCE = i_caseref);
+    o_response_text :=  o_response_text || l_apprefnum;
+ IF i_output_format = 1 THEN /* XML */
+   IF i_add_header = 1 THEN
+     o_output := '<?xml version="1.0" standalone="yes"?>';
+   END IF;
+   o_output := o_output || '<AppCaseRefFromIC>' || '<IntegratedCase_ID>'||i_caseref||'</IntegratedCase_ID>'|| '<AppCaseRef>'|| l_apprefnum ||'</AppCaseRef>' || '</AppCaseRefFromIC>';
+ ELSE /*pipe-delimited*/
+   o_output := i_caseref || '|' || l_apprefnum;    
+ END IF;
+IF i_debug_print > 0 THEN dbms_output.put_line(o_output); END IF;
+EXCEPTION
     WHEN NO_DATA_FOUND THEN
-IF debug_print > 0 THEN dbms_output.put_line('DEBUGEND at EXCEPTION:i_date_of_birth='||i_date_of_birth); END IF; /* HAVEN format */
-IF debug_print > 0 THEN dbms_output.put_line('DEBUGEND at EXCEPTION:numberOfUsers='||numberOfUsers); END IF;
-      CASE 
-         WHEN numberOfUsers = 1 THEN o_response_code := 'SINGLE_USER'; o_response_text := 'Single User: ' || l_first_name || ' ' || l_last_name || ' ' || i_date_of_birth || ' ' || l_ssn;
-         WHEN numberOfUsers = 0 THEN 
-            o_response_code := 'NO_DATA_FOUND'; 
-            o_response_text := 'No data found for: ' || l_first_name || ' ' || l_last_name || ' ' || i_date_of_birth || ' ' || l_ssn;
-            usersIDArray(1) := i_concernroleid; /* Use input concernroleid */
-         WHEN numberOfUsers > 1 THEN o_response_code := 'MULTIPLE_USERS';  o_response_text := 'Number of Users: '|| TO_CHAR(numberOfUsers) || ' for: ' || l_first_name || ' ' || l_last_name || ' ' || i_date_of_birth || ' ' || l_ssn;
-         ELSE o_response_code := 'ERROR'; o_response_code := 'Error : ' || sqlerrm;
-      END CASE;
-IF debug_print > 0 THEN dbms_output.put_line('DEBUGEND at END CASE:o_response_code='||o_response_code); END IF;
-  o_user_details_CLOB := '<?xml version="1.0" standalone="yes"?>' || crlf || '<users_ID_IC_info xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">' || crlf || -- start output with XML "header"
-    tabs(1) || '<user_ID_IC_info>' || crlf || tabs(2) || '<user_CONCERNROLEID>' || usersIDArray(1) || '</user_CONCERNROLEID>' || crlf || tabs(2) || '<user_SSN>' || l_ssn ||  '</user_SSN>' || crlf ||
-    tabs(2) || '<user_FirstName>' || l_first_name || '</user_FirstName>' || crlf || tabs(2) || '<user_LastName>' || l_last_name || '</user_LastName>' || crlf || 
-    tabs(2) || '<user_DOB>' || i_date_of_birth || '</user_DOB>' || crlf || tabs(2) || '<user_IC>' || usersICArray(1) || '</user_IC>' || crlf || 
-    tabs(2) || '<AppCaseRef>' || usersAppCaseRefArray(1) || '</AppCaseRef>' || crlf || tabs(2) || '<AppCreatedOn>' || usersAppCaseCREATEDONArray(1) || '</AppCreatedOn>' ||  crlf || 
-    tabs(2) || '<motivationType>' || usersMotivationTypeArray(1) || '</motivationType>' || crlf || tabs(1) || '</user_ID_IC_info>';
-      o_user_details_CLOB := o_user_details_CLOB || crlf || '</users_ID_IC_info>';
-IF debug_print > 0 THEN dbms_output.put_line('DEBUGEND at RETURN:o_user_details_CLOB='||crlf||o_user_details_CLOB); END IF;
-  END;
+      o_response_code := 'Error Code: '||SQLCODE;
+      o_response_text := 'Error Text:'||SQLERRM;
+IF i_debug_print > 0 THEN dbms_output.put_line('Error Code:'||SQLCODE||chr(10)||'Error Text:'||SQLERRM); END IF;
 END; /* Execution */
+END; /* DECLARE */

@@ -1,5 +1,6 @@
 create or replace 
 PROCEDURE FiveYr_Bar_Given_CONCERNROLEID
+--PROCEDURE FiveYr_Bar_Given_IC_AND_CRID
 (
  i_IC                   IN /* schemaname */ CASEHEADER.CASEREFERENCE%TYPE,
  i_concernroleid        IN /* schemaname */ CASEHEADER.CONCERNROLEID%TYPE,
@@ -36,6 +37,7 @@ DECLARE
   l_participantarray            numbers_table_type;
   l_successionidarray           numbers_table_type;
   l_evidencetypearray           char_table_type;
+  l_evidencetype                VARCHAR2(100);
   l_evidenceidarray             numbers_table_type;
   l_effectivefromarray          dates_table_type;
   l_caseparticipantarray        numbers_table_type;
@@ -59,15 +61,18 @@ DECLARE
   ss_comments                   VARCHAR2(4000) := '';
   ss_raiseOutStandVerification  VARCHAR2(4000) := ''; 
   ss_lprStatusDate              VARCHAR2(4000) := ''; 
-  ss_lawfulPresenceVerifiedCode VARCHAR2(4000) := ''; 
-  ss_g845MajorCode              VARCHAR2(4000) := ''; 
-  ss_fiveYearBarMetCode         VARCHAR2(4000) := ''; 
+  ss_lawfulPresenceVerifiedCode VARCHAR2(10) := ''; 
+  ss_lawfulPresenceVerifiedDesc VARCHAR2(100) := ''; 
+  ss_g845MajorCode              VARCHAR2(10) := ''; 
+  ss_fiveYearBarMetCode         VARCHAR2(10) := ''; 
+  ss_fiveYearBarMetDesc         VARCHAR2(400) := ''; 
   ss_fiveYearBarApplyStatus     VARCHAR2(4000) := ''; 
   ss_errorDescription           VARCHAR2(4000) := ''; 
   ss_errorCode                  VARCHAR2(4000) := ''; 
   ss_citizenshipVerified        VARCHAR2(4000) := ''; 
   ss_webServSftwrVer            VARCHAR2(4000) := ''; 
-  ss_verificationCode           VARCHAR2(4000) := ''; 
+  ss_verificationCode           VARCHAR2(10) := ''; 
+  ss_verificationDesc           VARCHAR2(400) := ''; 
   ss_usCitizenCode              VARCHAR2(4000) := ''; 
   ss_startDate                  VARCHAR2(4000) := ''; 
   ss_qualfiedNonCitizenCode     VARCHAR2(4000) := ''; 
@@ -78,7 +83,8 @@ DECLARE
   ss_lawfulPresenceVerified     VARCHAR2(4000) := ''; 
   ss_grantDate                  VARCHAR2(4000) := ''; 
   ss_fiveYearBarMetStatus       VARCHAR2(4000) := ''; 
-  ss_fiveYearBarApplyCode       VARCHAR2(4000) := ''; 
+  ss_fiveYearBarApplyCode       VARCHAR2(10) := ''; 
+  ss_fiveYearBarApplyDesc       VARCHAR2(100) := ''; 
   ss_endDate                    VARCHAR2(4000) := ''; 
   ss_eligStatementTxt           VARCHAR2(4000) := ''; 
   ss_eligStatementCd            VARCHAR2(4000) := ''; 
@@ -140,8 +146,7 @@ IF i_debug_print > 0 THEN dbms_output.put_line('l_IC='||l_IC||' l_caseid='||l_ca
             DENSE_RANK() OVER (PARTITION BY ED.PARTICIPANTID ORDER BY ED.RECEIVEDDATE DESC) AS Succession_Rank /* 20171010, Marty Brown, Changed selection criteria for citizenship-related records */
             BULK COLLECT INTO  l_evidencetypearray, l_successionidarray, l_effectivefromarray, l_evidenceidarray, l_rankarray
             FROM EVIDENCEDESCRIPTOR ED WHERE ED.PARTICIPANTID = l_concernroleid AND ED.CASEID = l_caseid AND 
-              ED.EVIDENCETYPE IN ('DET0026032' /* Citizen Status */,'DET0026043' /* Citizenship Status */) AND ED.STATUSCODE = 'EDS1';
-
+              ED.EVIDENCETYPE IN ('DET0026032' /* Citizen Status */,'DET0026043' /* Citizenship Status */,'DET45045' /* Renewal Immigration Evidence */) AND ED.STATUSCODE = 'EDS1'; /* 20171212, George Gluck,  Include EVIDENCETYPE DET45045 - Renewal Immigration Evidence */
 IF i_debug_print > 0 THEN dbms_output.put_line('DEBUGEVIDENCEDESCRIPTOR1: l_evidenceidarray.count= '||l_evidenceidarray.count); END IF;
           FOR i IN 1..l_evidenceidarray.count
           LOOP
@@ -149,8 +154,9 @@ IF i_debug_print > 0 THEN dbms_output.put_line('l_rankarray('||i||')='||l_rankar
 IF i_debug_print > 0 THEN dbms_output.put_line('l_successionidarray('||i||')='||l_successionidarray(i)); END IF;
 IF i_debug_print > 0 THEN dbms_output.put_line('l_effectivefromarray('||i||')='||l_effectivefromarray(i)); END IF;
 IF i_debug_print > 0 THEN dbms_output.put_line('l_evidenceidarray('||i||')='||l_evidenceidarray(i)); END IF;
-IF i_debug_print > 0 THEN dbms_output.put_line(' l_evidencetypearray('||i||')='|| l_evidencetypearray(i)); END IF;
+IF i_debug_print > 0 THEN dbms_output.put_line('l_evidencetypearray('||i||')='|| l_evidencetypearray(i)); END IF;
             l_evidenceid := l_evidenceidarray(i);
+            IF l_evidencetype IS NULL THEN l_evidencetype := l_evidencetypearray(i); ELSE l_evidencetype := l_evidencetype || '/' ||l_evidencetypearray(i); END IF;
             IF  l_evidencetypearray(i) = 'DET0026032'
             THEN
         /* Search for DET0026032 (Citizen data) using the evidenceid */
@@ -188,6 +194,60 @@ IF i_debug_print > 0 THEN dbms_output.put_line('cs_citizenStatusCode='||cs_citiz
 IF i_debug_print > 0 THEN dbms_output.put_line('cs_comments='||cs_comments); END IF;
 IF i_debug_print > 0 THEN dbms_output.put_line('cs_citizenStatusCode='||cs_citizenStatusCode); END IF;
 IF i_debug_print > 0 THEN dbms_output.put_line('cs_caseParticipantRoleID='||cs_caseParticipantRoleID); END IF;
+            ELSIF l_evidencetypearray(i) = 'DET45045' /* Renewal Immigration Evidence */
+            THEN
+              BEGIN SELECT VALUE INTO ss_caseParticipantRoleID FROM DYNAMICEVIDENCEDATAATTRIBUTE WHERE EVIDENCEID = l_evidenceidarray(i) AND NAME =  'caseParticipantRoleID';
+              EXCEPTION WHEN NO_DATA_FOUND THEN null; END; --Do nothing 
+IF i_debug_print > 0 THEN dbms_output.put_line('ss_caseParticipantRoleID(DET45045)='||ss_caseParticipantRoleID); END IF;
+              BEGIN SELECT VALUE INTO cs_dhsCaseNumber FROM DYNAMICEVIDENCEDATAATTRIBUTE WHERE EVIDENCEID = l_evidenceidarray(i) AND NAME =  'citizenshipVerified';
+              EXCEPTION WHEN NO_DATA_FOUND THEN null; END; --Do nothing 
+              BEGIN SELECT VALUE INTO cs_dhsCaseNumber FROM DYNAMICEVIDENCEDATAATTRIBUTE WHERE EVIDENCEID = l_evidenceidarray(i) AND NAME =  'dhsCaseNumber';
+              EXCEPTION WHEN NO_DATA_FOUND THEN null; END; --Do nothing 
+              BEGIN SELECT VALUE INTO cs_dhsCaseStatus FROM DYNAMICEVIDENCEDATAATTRIBUTE WHERE EVIDENCEID = l_evidenceidarray(i) AND NAME =  'dhsCaseStatus';
+              EXCEPTION WHEN NO_DATA_FOUND THEN null; END; --Do nothing 
+              BEGIN SELECT VALUE INTO ss_fiveYearBarMetCode FROM DYNAMICEVIDENCEDATAATTRIBUTE WHERE EVIDENCEID = l_evidenceidarray(i) AND NAME =  'fiveYearBarMetCode';
+              EXCEPTION WHEN NO_DATA_FOUND THEN null; END; --Do nothing
+              IF ss_fiveYearBarMetCode IS NOT NULL 
+              THEN
+                SELECT DESCRIPTION INTO ss_fiveYearBarMetDesc FROM CODETABLEITEM WHERE CODE = ss_fiveYearBarMetCode;
+              END IF;
+IF i_debug_print > 0 THEN dbms_output.put_line('ss_fiveYearBarMetCode/ss_fiveYearBarMetDesc1='||ss_fiveYearBarMetCode||'/'||ss_fiveYearBarMetDesc); END IF;
+              BEGIN SELECT VALUE INTO ss_fiveYearBarApplyCode FROM DYNAMICEVIDENCEDATAATTRIBUTE WHERE EVIDENCEID = l_evidenceidarray(i) AND NAME =  'fiveYearBarApplyCode';
+              EXCEPTION WHEN NO_DATA_FOUND THEN null; END; --Do nothing 
+              IF ss_fiveYearBarApplyCode IS NOT NULL 
+              THEN
+                SELECT DESCRIPTION INTO ss_fiveYearBarApplyDesc FROM CODETABLEITEM WHERE CODE = ss_fiveYearBarApplyCode;
+              END IF;
+IF i_debug_print > 0 THEN dbms_output.put_line('fiveYearBarApplyCode/ss_fiveYearBarApplyCode1='||ss_fiveYearBarApplyCode||'/'||ss_fiveYearBarApplyDesc); END IF;
+              BEGIN SELECT VALUE INTO ss_grantDate FROM DYNAMICEVIDENCEDATAATTRIBUTE WHERE EVIDENCEID = l_evidenceidarray(i) AND NAME =  'grantDate';
+              EXCEPTION WHEN NO_DATA_FOUND THEN null; END; --Do nothing 
+IF i_debug_print > 0 THEN dbms_output.put_line('ss_grantDate1='||ss_grantDate); END IF;
+              BEGIN SELECT VALUE INTO ss_lawfulPresenceVerifiedCode FROM DYNAMICEVIDENCEDATAATTRIBUTE WHERE EVIDENCEID = l_evidenceidarray(i) AND NAME =  'lawfulPresenceVerifiedCode';
+              EXCEPTION WHEN NO_DATA_FOUND THEN null; END; --Do nothing 
+              BEGIN SELECT VALUE INTO ss_errorDescription FROM DYNAMICEVIDENCEDATAATTRIBUTE WHERE EVIDENCEID = l_evidenceidarray(i) AND NAME =  'errorDescription';
+              EXCEPTION WHEN NO_DATA_FOUND THEN null; END; --Do nothing 
+              BEGIN SELECT VALUE INTO ss_errorCode FROM DYNAMICEVIDENCEDATAATTRIBUTE WHERE EVIDENCEID = l_evidenceidarray(i) AND NAME =  'errorCode';
+              EXCEPTION WHEN NO_DATA_FOUND THEN null; END; --Do nothing 
+              BEGIN SELECT VALUE INTO ss_nonCitCoaCode FROM DYNAMICEVIDENCEDATAATTRIBUTE WHERE EVIDENCEID = l_evidenceidarray(i) AND NAME =  'nonCitCoaCode';
+              EXCEPTION WHEN NO_DATA_FOUND THEN null; END; --Do nothing 
+              BEGIN SELECT VALUE INTO ss_qualfiedNonCitizenCode FROM DYNAMICEVIDENCEDATAATTRIBUTE WHERE EVIDENCEID = l_evidenceidarray(i) AND NAME =  'qualfiedNonCitizenCode';
+              EXCEPTION WHEN NO_DATA_FOUND THEN null; END; --Do nothing 
+              BEGIN SELECT VALUE INTO ss_usCitizenCode FROM DYNAMICEVIDENCEDATAATTRIBUTE WHERE EVIDENCEID = l_evidenceidarray(i) AND NAME =  'usCitizenCode';
+              EXCEPTION WHEN NO_DATA_FOUND THEN null; END; --Do nothing 
+              BEGIN SELECT VALUE INTO ss_verificationCode FROM DYNAMICEVIDENCEDATAATTRIBUTE WHERE EVIDENCEID = l_evidenceidarray(i) AND NAME =  'verificationCode';
+              EXCEPTION WHEN NO_DATA_FOUND THEN null; END; --Do nothing 
+              IF ss_verificationCode IS NOT NULL 
+              THEN
+                SELECT DESCRIPTION INTO ss_verificationDesc FROM CODETABLEITEM WHERE CODE = ss_verificationCode;
+              END IF;
+IF i_debug_print > 0 THEN dbms_output.put_line('ss_verificationCode/ss_verificationDesc1='||ss_verificationCode||'/'||ss_verificationDesc); END IF;
+              IF ss_lawfulPresenceVerifiedCode IS NOT NULL 
+              THEN
+                SELECT DESCRIPTION INTO ss_lawfulPresenceVerifiedDesc FROM CODETABLEITEM WHERE CODE = ss_lawfulPresenceVerifiedCode;
+              END IF;
+IF i_debug_print > 0 THEN dbms_output.put_line('ss_lawfulPresenceVerifiedCode/ss_lawfulPresenceVerifiedDesc1='||ss_lawfulPresenceVerifiedCode||'/'||ss_lawfulPresenceVerifiedDesc); END IF;
+              BEGIN SELECT VALUE INTO ss_lawfulPresenceVerified FROM DYNAMICEVIDENCEDATAATTRIBUTE WHERE EVIDENCEID = l_evidenceidarray(i) AND NAME =  'lawfullyPresent';
+              EXCEPTION WHEN NO_DATA_FOUND THEN null; END; --Do nothing 
             ELSE /* DET0026043 */              
               BEGIN SELECT TO_CHAR(TO_DATE(VALUE, 'YYYYMMDD'), 'YYYYMMDD') INTO ss_startDate FROM DYNAMICEVIDENCEDATAATTRIBUTE WHERE EVIDENCEID = l_evidenceidarray(i) AND NAME =  'startDate';
               EXCEPTION WHEN NO_DATA_FOUND THEN null; END; --Do nothing
@@ -253,9 +313,9 @@ IF i_debug_print > 0 THEN dbms_output.put_line('ss_fiveYearBarApplyCode='||ss_fi
               EXCEPTION WHEN NO_DATA_FOUND THEN null; END; --Do nothing 
               BEGIN SELECT VALUE INTO ss_eligStatementCd FROM DYNAMICEVIDENCEDATAATTRIBUTE WHERE EVIDENCEID = l_evidenceidarray(i) AND NAME =  'eligStatementCd';
               EXCEPTION WHEN NO_DATA_FOUND THEN null; END; --Do nothing 
-              BEGIN SELECT VALUE INTO ss_dhsCaseStatus FROM DYNAMICEVIDENCEDATAATTRIBUTE WHERE EVIDENCEID = l_evidenceidarray(i) AND NAME =  'dhsCaseStatus';
+              BEGIN SELECT VALUE INTO cs_dhsCaseStatus FROM DYNAMICEVIDENCEDATAATTRIBUTE WHERE EVIDENCEID = l_evidenceidarray(i) AND NAME =  'dhsCaseStatus';
               EXCEPTION WHEN NO_DATA_FOUND THEN null; END; --Do nothing 
-              BEGIN SELECT VALUE INTO ss_dhsCaseNumber FROM DYNAMICEVIDENCEDATAATTRIBUTE WHERE EVIDENCEID = l_evidenceidarray(i) AND NAME =  'dhsCaseNumber';
+              BEGIN SELECT VALUE INTO cs_dhsCaseNumber FROM DYNAMICEVIDENCEDATAATTRIBUTE WHERE EVIDENCEID = l_evidenceidarray(i) AND NAME =  'dhsCaseNumber';
               EXCEPTION WHEN NO_DATA_FOUND THEN null; END; --Do nothing 
               BEGIN SELECT VALUE INTO ss_dhsAutotriggerStepTwo FROM DYNAMICEVIDENCEDATAATTRIBUTE WHERE EVIDENCEID = l_evidenceidarray(i) AND NAME =  'dhsAutotriggerStepTwo';
               EXCEPTION WHEN NO_DATA_FOUND THEN null; END; --Do nothing 
@@ -271,7 +331,9 @@ IF i_debug_print > 0 THEN dbms_output.put_line('ss_citizenshipSource='||ss_citiz
         END LOOP; /* FOR j IN 1..l_casereferencearray.count  */
      ELSE o_response_code := 'ERROR'; o_response_text := 'Error : ' || sqlerrm; RETURN;
   END CASE;
+IF i_debug_print > 0 THEN dbms_output.put_line('XML or pipe i_output_format='||i_output_format); END IF;
   IF i_output_format = 1 THEN /* XML */
+IF i_debug_print > 0 THEN dbms_output.put_line('XML i_output_format='||i_output_format); END IF;
     o_user_details_CLOB :=  o_user_details_CLOB ||
       '<FiveYearBar_info>'||
       '<evidenceID_cs>'||
@@ -294,17 +356,21 @@ IF i_debug_print > 0 THEN dbms_output.put_line('ss_citizenshipSource='||ss_citiz
       '</evidenceID_cs>'||
       '<evidenceID_ss>'||
       '<ss_evidenceID>'||l_evidenceid||'</ss_evidenceID>'||
+--      '<ss_evidenceType>'||l_evidencetype||'</ss_evidenceType>'|| /* Use for debug */
       '<ss_raiseOutStandVerification>'||ss_raiseOutStandVerification||'</ss_raiseOutStandVerification>'||
       '<ss_lprStatusDate>'||ss_lprStatusDate||'</ss_lprStatusDate>'||
       '<ss_lawfulPresenceVerifiedCode>'||ss_lawfulPresenceVerifiedCode||'</ss_lawfulPresenceVerifiedCode>'||
+      '<ss_lawfulPresenceVerifiedDesc>'||ss_lawfulPresenceVerifiedDesc||'</ss_lawfulPresenceVerifiedDesc>'||
       '<ss_g845MajorCode>'||ss_g845MajorCode||'</ss_g845MajorCode>'||
       '<ss_fiveYearBarMetCode>'||ss_fiveYearBarMetCode||'</ss_fiveYearBarMetCode>'||
-      '<ss_fiveYearBarApplyStatus>'||ss_fiveYearBarApplyStatus||'</ss_fiveYearBarApplyStatus>'||
+      '<ss_fiveYearBarMetDesc>'||ss_fiveYearBarMetDesc||'</ss_fiveYearBarMetDesc>'||
+      '<ss_fiveYearBarMetStatus>'||ss_fiveYearBarMetStatus||'</ss_fiveYearBarMetStatus>'||
       '<ss_errorDescription>'||ss_errorDescription||'</ss_errorDescription>'||
       '<ss_errorCode>'||ss_errorCode||'</ss_errorCode>'||
       '<ss_citizenshipVerified>'||ss_citizenshipVerified||'</ss_citizenshipVerified>'||
       '<ss_webServSftwrVer>'||ss_webServSftwrVer||'</ss_webServSftwrVer>'||
       '<ss_verificationCode>'||ss_verificationCode||'</ss_verificationCode>'||
+      '<ss_verificationDesc>'||ss_verificationDesc||'</ss_verificationDesc>'||
       '<ss_usCitizenCode>'||ss_usCitizenCode||'</ss_usCitizenCode>'||
       '<ss_startDate>'||ss_startDate||'</ss_startDate>'||
       '<ss_qualfiedNonCitizenCode>'||ss_qualfiedNonCitizenCode||'</ss_qualfiedNonCitizenCode>'||
@@ -314,8 +380,9 @@ IF i_debug_print > 0 THEN dbms_output.put_line('ss_citizenshipSource='||ss_citiz
       '<ss_nonCitCoaCode>'||ss_nonCitCoaCode||'</ss_nonCitCoaCode>'||
       '<ss_lawfulPresenceVerified>'||ss_lawfulPresenceVerified||'</ss_lawfulPresenceVerified>'||
       '<ss_grantDate>'||ss_grantDate||'</ss_grantDate>'||
-      '<ss_fiveYearBarMetStatus>'||ss_fiveYearBarMetStatus||'</ss_fiveYearBarMetStatus>'||
       '<ss_fiveYearBarApplyCode>'||ss_fiveYearBarApplyCode||'</ss_fiveYearBarApplyCode>'||
+      '<ss_fiveYearBarApplyDesc>'||ss_fiveYearBarApplyDesc||'</ss_fiveYearBarApplyDesc>'||
+      '<ss_fiveYearBarApplyStatus>'||ss_fiveYearBarApplyStatus||'</ss_fiveYearBarApplyStatus>'||
       '<ss_endDate>'||ss_endDate||'</ss_endDate>'||
       '<ss_eligStatementTxt>'||ss_eligStatementTxt||'</ss_eligStatementTxt>'||
       '<ss_eligStatementCd>'||ss_eligStatementCd||'</ss_eligStatementCd>'||
@@ -384,6 +451,7 @@ IF i_debug_print > 0 THEN dbms_output.put_line('ss_citizenshipSource='||ss_citiz
       ss_citizenshipSource||'|'
       ;
   END IF;
+IF i_debug_print > 0 THEN dbms_output.put_line('XML o_user_details_CLOB='||o_user_details_CLOB); END IF;
   IF o_user_details_CLOB IS NULL THEN
     o_response_code := 'NO_DATA_FOUND'; 
     o_response_text := 'No 5-year bar data found for input concernroleid and generated caseid: ' || i_concernroleid || ' ' || l_caseid;
@@ -395,6 +463,7 @@ IF i_debug_print > 0 THEN dbms_output.put_line('ss_citizenshipSource='||ss_citiz
     o_user_details_CLOB := '<FiveYearBar>' || o_user_details_CLOB || '</FiveYearBar>';
     IF i_add_header <> 0 THEN o_user_details_CLOB := '<?xml version="1.0" standalone="yes"?>' || o_user_details_CLOB; END IF;
   END IF;
+IF i_debug_print > 0 THEN dbms_output.put_line('XML o_response_text='||o_response_text); END IF;
   RETURN;
 EXCEPTION
     WHEN NO_DATA_FOUND THEN

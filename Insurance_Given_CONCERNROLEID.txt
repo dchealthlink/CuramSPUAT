@@ -161,7 +161,7 @@ IF i_debug_print > 0 THEN dbms_output.put_line('l_rankarray('||i||')='||l_rankar
 IF i_debug_print > 0 THEN dbms_output.put_line('l_successionidarray('||i||')='||l_successionidarray(i)); END IF;
 IF i_debug_print > 0 THEN dbms_output.put_line('l_effectivefromarray('||i||')='||l_effectivefromarray(i)); END IF;
 IF i_debug_print > 0 THEN dbms_output.put_line('l_evidenceidarray('||i||')='||l_evidenceidarray(i)); END IF;
-        /* Search for DET0026030 (Income data) using the evidenceid */
+        /* Search for DET0026018 (Insurance data) using the evidenceid */
             BEGIN SELECT VALUE INTO l_coverageTypeCode FROM DYNAMICEVIDENCEDATAATTRIBUTE WHERE EVIDENCEID = l_evidenceidarray(i) AND NAME =  'coverageType';
             EXCEPTION WHEN NO_DATA_FOUND 
             THEN
@@ -173,16 +173,18 @@ IF i_debug_print > 0 THEN dbms_output.put_line('SELECT VALUE INTO l_coverageType
 IF i_debug_print > 0 THEN dbms_output.put_line('l_coverageTypeCode='||l_coverageTypeCode); END IF;
               SELECT DESCRIPTION INTO l_coverageType FROM CODETABLEITEM WHERE CODE = l_coverageTypeCode AND TABLENAME IN ('HCRBenefitType', 'HCBenefitType', 'SourceIDCode', 'ProductName', 'HCInsuranceCoverageType');
 IF i_debug_print > 0 THEN dbms_output.put_line('l_coverageTypeCode/l_coverageType='||l_coverageTypeCode||'/'||l_coverageType); END IF;
-                BEGIN SELECT TO_CHAR(TO_DATE(VALUE, 'YYYYMMDD'), 'YYYYMMDD') INTO ins_startDate FROM DYNAMICEVIDENCEDATAATTRIBUTE WHERE EVIDENCEID = l_evidenceidarray(i) AND NAME =  'coverageStartDate';
+--                BEGIN SELECT TO_CHAR(TO_DATE(VALUE, 'YYYYMMDD'), 'YYYYMMDD') INTO ins_startDate FROM DYNAMICEVIDENCEDATAATTRIBUTE WHERE EVIDENCEID = l_evidenceidarray(i) AND NAME =  'coverageStartDate';
+                BEGIN SELECT TO_CHAR(TO_DATE(VALUE, 'YYYYMMDD'), 'YYYYMMDD') INTO ins_startDate FROM DYNAMICEVIDENCEDATAATTRIBUTE WHERE EVIDENCEID = l_evidenceidarray(i) AND NAME =  'startDate';
             EXCEPTION WHEN NO_DATA_FOUND THEN null; END; --Do nothing
 IF i_debug_print > 0 AND l_effectivefromarray(i) IS NOT NULL THEN dbms_output.put_line('ins_startDate0/l_effectivefromarray(i)='||TO_CHAR(TO_DATE(ins_startDate, 'YYYYMMDD'), 'YYYYMMDD')||'/'||TO_CHAR(TO_DATE(l_effectivefromarray(i), 'YYYYMMDD'), 'YYYYMMDD')); END IF;
               IF (l_effectivefromarray(i) IS NOT NULL AND l_effectivefromarray(i) <> TO_DATE('00010101', 'YYYYMMDD')) THEN ins_startDate := TO_CHAR(l_effectivefromarray(i), 'YYYYMMDD'); END IF; /* 20170920, George Gluck, Fix to use sucessionid rank properly */
 IF i_debug_print > 0 THEN dbms_output.put_line('ins_startDate1='||TO_CHAR(TO_DATE(ins_startDate, 'YYYYMMDD'), 'YYYYMMDD')); END IF;
 IF i_debug_print > 0 THEN dbms_output.put_line('TO_CHAR(TO_DATE(ins_startDate) - 1)='||TO_CHAR(TO_DATE(ins_startDate, 'YYYYMMDD') - 1, 'YYYYMMDD')); END IF;
-             BEGIN SELECT VALUE INTO ins_endDate FROM DYNAMICEVIDENCEDATAATTRIBUTE WHERE EVIDENCEID = l_evidenceidarray(i) AND NAME =  'coverageEndDate';
+--             BEGIN SELECT VALUE INTO ins_endDate FROM DYNAMICEVIDENCEDATAATTRIBUTE WHERE EVIDENCEID = l_evidenceidarray(i) AND NAME =  'coverageEndDate';
+             BEGIN SELECT VALUE INTO ins_endDate FROM DYNAMICEVIDENCEDATAATTRIBUTE WHERE EVIDENCEID = l_evidenceidarray(i) AND NAME =  'endDate';
               EXCEPTION WHEN NO_DATA_FOUND THEN null; END; --Do nothing
               IF l_rankarray(i) > 1 THEN ins_endDate := nextEndDate; END IF; /* 20170920, George Gluck, Fix to use sucessionid rank properly */
-              nextEndDate :=TO_CHAR(TO_DATE(ins_startDate, 'YYYYMMDD') - 1, 'YYYYMMDD'); /* 20170920, George Gluck, Fix to use sucessionid rank properly */
+              nextEndDate := TO_CHAR(TO_DATE(ins_startDate, 'YYYYMMDD') - 1, 'YYYYMMDD'); /* 20170920, George Gluck, Fix to use sucessionid rank properly */
 IF i_debug_print > 0 THEN dbms_output.put_line('l_rankarray('||i||')/ins_endDate/nextEndDate='||l_rankarray(i)||'/'||ins_endDate||'/'||nextEndDate); END IF;
               IF i_output_format = 1 THEN /* XML */
                 o_user_details_CLOB :=  o_user_details_CLOB || 
